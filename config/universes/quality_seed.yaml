@@ -1,0 +1,11 @@
+# Companies the owner considers "good reputation, good business".
+# Used in M2 to derive the quality-filter rules (what these have in common).
+name: quality_seed
+as_of: 2026-09-30
+codes:
+  - GP
+  - BATBC
+  - SQURPHARMA
+  - LHB
+  - BSC
+# avoid: []   # add "never touch" examples here to sharpen the filter

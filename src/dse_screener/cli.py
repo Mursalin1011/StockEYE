@@ -1,0 +1,448 @@
+"""Command line entry point: `python -m dse_screener <command>`."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from datetime import date
+
+from pathlib import Path
+
+import pandas as pd
+import yaml
+
+from . import backtest, daily, engine, fundamentals, ingest, quality, report, rules
+from .config import CONFIG_DIR, Profile, list_profiles, load_profile, load_settings, load_universe, save_secret
+from .notify import TelegramNotifier, find_chat_ids
+from .notify.telegram import TelegramError
+from .db import Database
+from .sources import DseArchiveSource, DseCompanySource, DseNewsSource
+from .sources.http import PoliteClient
+
+log = logging.getLogger("dse_screener")
+
+
+def _parse_date(s: str) -> date:
+    return date.fromisoformat(s)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="dse_screener", description="DSE stock screener")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("backfill", help="download price history from the DSE archive")
+    p.add_argument("--start", type=_parse_date, help="default: backfill_years ago")
+    p.add_argument("--end", type=_parse_date, help="default: today")
+    p.add_argument("--no-resume", action="store_true", help="refetch chunks already downloaded")
+
+    p = sub.add_parser("ingest", help="fetch one trading day of prices (default: today)")
+    p.add_argument("--date", type=_parse_date)
+
+    p = sub.add_parser("fundamentals", help="fetch company pages + news, rebuild corporate actions")
+    p.add_argument("--universe", default="ds30")
+
+    p = sub.add_parser("actions", help="rebuild corporate actions from stored news and list them")
+    p.add_argument("--universe", default="ds30")
+
+    p = sub.add_parser("quality", help="quality metrics and filter result per stock")
+    p.add_argument("--profile", default="position", help="profile whose quality rules to apply")
+    p.add_argument("--universe", help="override the profile's universe")
+
+    p = sub.add_parser("screen", help="run profiles: quality filter -> strategies -> ranked shortlist")
+    p.add_argument("--profile", action="append", help="profile name (repeatable); default: all profiles")
+    p.add_argument("--date", type=_parse_date, help="as-of date (default: latest stored trading day)")
+    p.add_argument("--all-signals", action="store_true", help="also list signals below the shortlist cut")
+    p.add_argument("--no-save", action="store_true", help="don't store the run in the database")
+
+    p = sub.add_parser("daily", help="the 3pm job: wait for data, refresh news, screen, send to Telegram")
+    p.add_argument("--date", type=_parse_date, help="re-run a past day (no waiting)")
+    p.add_argument("--dry-run", action="store_true", help="print the message instead of sending it")
+
+    p = sub.add_parser("report", help="build the summary from stored data (no downloads)")
+    p.add_argument("--date", type=_parse_date, help="default: latest stored trading day")
+    p.add_argument("--send", action="store_true", help="send it to Telegram (default: print only)")
+
+    p = sub.add_parser("backtest", help="what if you had bought each day's shortlist?")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--set", action="append", default=[], metavar="PATH=VALUE",
+                   help="override a profile value, e.g. strategies.quiet_accumulation.params.vol_short_days=20")
+    p.add_argument("--trades", action="store_true", help="also list every trade")
+    p.add_argument("--csv", type=Path, help="write every trade to this CSV file (opens in Excel)")
+
+    p = sub.add_parser("tune", help="grid-search parameters on the in-sample period, check out-of-sample")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--grid", action="append", required=True, metavar="PATH=V1,V2,...",
+                   help="e.g. strategies.quiet_accumulation.params.min_volume_ratio=1.5,2,2.5 (repeatable)")
+    p.add_argument("--set", action="append", default=[], metavar="PATH=VALUE")
+    p.add_argument("--min-trades", type=int, default=15, help="ignore combinations with fewer in-sample trades")
+    p.add_argument("--top", type=int, default=15)
+
+    p = sub.add_parser("dashboard", help="open the dashboard in your browser (Streamlit)")
+    p.add_argument("--port", type=int, default=8501)
+
+    sub.add_parser("telegram-setup", help="find your chat id after you've messaged the bot, and save it")
+    sub.add_parser("telegram-test", help="send a test message")
+
+    p = sub.add_parser("status", help="show what is stored")
+    p.add_argument("--universe", default="ds30")
+
+    args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    settings = load_settings()
+    db = Database(settings.resolve(settings.paths.db))
+    try:
+        return COMMANDS[args.command](args, settings, db)
+    finally:
+        db.close()
+
+
+def _client(settings) -> PoliteClient:
+    return PoliteClient(settings.http, settings.resolve(settings.paths.raw))
+
+
+def cmd_backfill(args, settings, db) -> int:
+    source = DseArchiveSource(_client(settings), settings.sources.dse_archive.base_url)
+    report = ingest.backfill(db, source, settings, args.start, args.end, resume=not args.no_resume)
+    print(
+        f"Backfill done: {report.rows:,} rows from {report.chunks_ok} chunks "
+        f"({report.chunks_skipped} skipped, {len(report.errors)} failed)"
+    )
+    for err in report.errors:
+        print(f"  FAILED {err}")
+    return 1 if report.errors else 0
+
+
+def cmd_ingest(args, settings, db) -> int:
+    source = DseArchiveSource(_client(settings), settings.sources.dse_archive.base_url)
+    day = args.date or settings.today()
+    rows, complete = ingest.ingest_day(db, source, settings, day)
+    print(f"{day}: {rows} rows ({'complete' if complete else 'INCOMPLETE or no trading'})")
+    return 0 if complete else 2
+
+
+def cmd_fundamentals(args, settings, db) -> int:
+    client = _client(settings)
+    codes = load_universe(args.universe).codes
+    report = fundamentals.refresh_fundamentals(
+        db,
+        DseCompanySource(client, settings.sources.dse_company.base_url),
+        DseNewsSource(client, settings.sources.dse_news.base_url),
+        codes,
+    )
+    print(f"Fundamentals: {report.companies}/{len(codes)} companies, {report.news_added} new news items")
+    for err in report.errors:
+        print(f"  FAILED {err}")
+    return cmd_actions(args, settings, db) or (1 if report.errors else 0)
+
+
+def cmd_actions(args, settings, db) -> int:
+    codes = load_universe(args.universe).codes
+    actions = fundamentals.rebuild_corporate_actions(db, codes)
+    print(f"Corporate actions: {len(actions)} events for {actions['code'].nunique() if len(actions) else 0} stocks")
+    _print_actions(actions)
+    return 0
+
+
+def _print_actions(actions) -> None:
+    if actions.empty:
+        return
+    print(f"  {'code':<11} {'record':<10}  {'ex-date':<10}  {'cash%':>6} {'stock%':>6}  "
+          f"{'ref':>7} {'expected':>8} {'opened':>7}  check")
+    for a in actions.sort_values(["code", "record_date"]).itertuples(index=False):
+        expected = a.ref_close * a.price_factor
+        if a.ex_open is None or a.ex_open != a.ex_open:  # None or NaN
+            opened, check = "-", "upcoming"
+        else:
+            dev = a.ex_open / expected - 1
+            opened, check = f"{a.ex_open:7.1f}", f"{dev:+.1%}" + ("" if abs(dev) <= 0.05 else "  <- CHECK")
+        ex = str(a.ex_date)[:10] if a.ex_date is not None and a.ex_date == a.ex_date else "-"
+        if a.revised:
+            check += "  (AGM-revised amounts)"
+        print(f"  {a.code:<11} {a.record_date:<10}  {ex:<10}  {a.cash_pct:6.1f} {a.stock_pct:6.1f}  "
+              f"{a.ref_close:7.1f} {expected:8.1f} {opened:>7}  {check}")
+
+
+def cmd_quality(args, settings, db) -> int:
+    profile = load_profile(args.profile)
+    codes = load_universe(args.universe or profile.universe).codes
+    seed = set(load_universe("quality_seed").codes)
+    metrics = quality.compute_quality_metrics(db, codes)
+    qf = profile.filters.get("quality")
+    result = rules.evaluate(metrics, qf.rules if qf and qf.enabled else {})
+
+    cols = ["category", "market_cap_mn", "dividend_streak", "cash_dividend_years_5", "eps_positive_years_5",
+            "eps_cagr_3y", "pe", "p_nav", "dividend_yield", "strategic_pct", "institute_change_pp"]
+    short = ["cat", "mcap_bn", "div_strk", "cash5", "eps+5", "eps_cagr", "pe", "p/nav", "yield", "strat%", "inst_chg"]
+    table = metrics[cols].copy()
+    table["market_cap_mn"] = table["market_cap_mn"] / 1000
+    table.columns = short
+    table["pass"] = result["passed"].map({True: "PASS", False: "-"})
+    table.index = [f"{c}{'*' if c in seed else ''}" for c in table.index]
+    with pd.option_context("display.width", 200, "display.max_columns", 20, "display.float_format", "{:,.1f}".format):
+        print(table.sort_values(["pass", "mcap_bn"], ascending=[True, False]).to_string())
+    print(f"\n* = your quality seed. Profile '{profile.name}': "
+          f"{int(result['passed'].sum())}/{len(result)} pass the quality filter.")
+    for code, r in result[~result["passed"]].iterrows():
+        print(f"  {code:<11} {'; '.join(r['failures'])}")
+    return 0
+
+
+def cmd_screen(args, settings, db) -> int:
+    for name in args.profile or list_profiles(settings):
+        profile = load_profile(name)
+        result = engine.run_profile(db, settings, profile, args.date)
+        if not args.no_save:
+            db.save_screen(result, profile.model_dump_json(by_alias=True))
+        _print_screen(result, profile, args.all_signals)
+    return 0
+
+
+def _print_screen(result, profile, all_signals: bool) -> None:
+    passed = result.universe_size - len(result.excluded)
+    print(f"\n=== {profile.name.upper()}: {profile.description}")
+    print(f"    {result.as_of}  |  {passed}/{result.universe_size} pass quality  |  "
+          f"{len(result.signals)} strategy signals  |  {len(result.picks)} on the shortlist "
+          f"(score >= {profile.ranking.min_score:g})")
+    if result.skipped:
+        print(f"    not traded on {result.as_of}: {', '.join(result.skipped)}")
+    for i, p in enumerate(result.picks.itertuples(), 1):
+        print(f"\n  {i}. {p.code}  score {p.final_score:.0f}")
+        for reason in p.reasons:
+            print(f"       - {reason}")
+    if result.picks.empty:
+        print("\n  No stock meets the shortlist bar today.")
+    if all_signals and not result.signals.empty:
+        print("\n  All signals:")
+        for s in result.signals.sort_values("score", ascending=False).itertuples():
+            print(f"    {s.code:<11} {s.title:<26} {s.score:5.1f}")
+
+
+def _deliverer(settings, dry_run: bool):
+    if dry_run:
+        return lambda text: print(report.to_plain(text))
+    if not settings.telegram.enabled:
+        raise SystemExit("Telegram is disabled in config/settings.yaml (telegram.enabled)")
+    return TelegramNotifier(settings.telegram.bot_token, settings.telegram.chat_id).send
+
+
+def _log_to_file(settings, name: str) -> Path:
+    log_dir = settings.resolve(settings.paths.db).parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"{name}-{settings.today().isoformat()}.log"
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
+    return path
+
+
+def cmd_daily(args, settings, db) -> int:
+    log_path = _log_to_file(settings, "daily")
+    try:
+        deliver = _deliverer(settings, args.dry_run)
+    except TelegramError as exc:
+        log.error("%s", exc)
+        return 3
+    try:
+        outcome = daily.run_daily(settings, db, deliver, day=args.date, wait=args.date is None)
+    except Exception as exc:
+        log.exception("Daily run failed")
+        if not args.dry_run:
+            try:
+                deliver(report.build_notice("⚠️ DSE Screener failed",
+                                            f"{type(exc).__name__}: {exc}\nLog: {log_path}"))
+            except Exception:
+                log.exception("Could not send the failure notice either")
+        return 1
+    log.info("Daily run: %s for %s, picks %s", outcome.status, outcome.day, outcome.picks)
+    return 0
+
+
+def cmd_report(args, settings, db) -> int:
+    profiles = [load_profile(n) for n in list_profiles(settings)]
+    results = [(p, engine.run_profile(db, settings, p, args.date)) for p in profiles]
+    day = results[0][1].as_of
+    pick_codes = sorted({c for _, r in results for c in r.picks["code"]})
+    text = report.build_daily_report(
+        day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
+        settings.report,
+    )
+    _deliverer(settings, dry_run=not args.send)(text)
+    return 0
+
+
+def _profile_with(name: str, overrides: list[str]) -> Profile:
+    """Load a profile and apply PATH=VALUE overrides (values parsed as YAML: 20, 1.5, true, [A, B])."""
+    data = yaml.safe_load((CONFIG_DIR / "profiles" / f"{name}.yaml").read_text(encoding="utf-8"))
+    for item in overrides:
+        path, _, raw = item.partition("=")
+        node = data
+        *parents, leaf = path.strip().split(".")
+        for key in parents:
+            node = node.setdefault(key, {})
+        node[leaf] = yaml.safe_load(raw)
+    return Profile.model_validate(data)
+
+
+def _backtest_inputs(db, settings, profile):
+    codes = load_universe(profile.universe).codes
+    return (engine.load_adjusted_prices(db, settings, codes), quality.compute_quality_metrics(db, codes),
+            db.load_corporate_actions(codes))
+
+
+def _fmt_summary(df: pd.DataFrame) -> str:
+    cols = {"trades": "trades", "median_ret": "median%", "hit_rate": "hit%", "median_bench": "bench%",
+            "median_excess": "vs bench%", "beat_bench": "beat%", "worst": "worst%", "best": "best%"}
+    out = df[list(cols)].rename(columns=cols)
+    with pd.option_context("display.width", 200, "display.float_format", "{:,.1f}".format):
+        return out.to_string()
+
+
+def cmd_backtest(args, settings, db) -> int:
+    profile = _profile_with(args.profile, args.set)
+    res = backtest.run_backtest(profile, *_backtest_inputs(db, settings, profile))
+    bt = profile.backtest
+    print(f"\n=== Backtest {profile.name}: {res.start:%Y-%m-%d} .. {res.end:%Y-%m-%d}, "
+          f"{len(res.universe)} stocks pass quality, cost {bt.cost_pct}% round trip, "
+          f"entry next open, non-overlapping {bt.primary_horizon}d trades")
+    if res.in_sample_until is not None:
+        print(f"    in-sample (tuning) up to {res.in_sample_until:%Y-%m-%d}; later = out-of-sample test")
+    for h in res.horizons:
+        print(f"\n--- holding {h} trading days (returns net of costs, %)")
+        print(_fmt_summary(backtest.summarize(res, h)))
+    if args.trades:
+        h = res.primary
+        cols = ["date", "code", "rank", "final_score", "strategies", f"ret_{h}", f"bench_{h}", f"excess_{h}"]
+        with pd.option_context("display.width", 200, "display.max_rows", 500, "display.float_format", "{:,.1f}".format):
+            print("\n" + res.trades[cols].to_string(index=False))
+    if args.csv:
+        res.trades.to_csv(args.csv, index=False, float_format="%.2f")
+        print(f"\nWrote {len(res.trades)} trades to {args.csv}")
+    print("\nCaveats: today's fundamentals and today's DS30 list are applied to the past "
+          "(look-ahead and survivorship bias). Treat small samples with care.")
+    return 0
+
+
+def cmd_tune(args, settings, db) -> int:
+    import itertools
+
+    base = _profile_with(args.profile, args.set)
+    if base.backtest.in_sample_until is None:
+        raise SystemExit("Set backtest.in_sample_until in the profile first: tuning needs an untouched test period.")
+    inputs = _backtest_inputs(db, settings, base)
+    axes = []
+    for g in args.grid:
+        path, _, values = g.partition("=")
+        axes.append([(path, v.strip()) for v in values.split(",")])
+    rows = []
+    h = base.backtest.primary_horizon
+    for combo in itertools.product(*axes):
+        prof = _profile_with(args.profile, args.set + [f"{p}={v}" for p, v in combo])
+        s = backtest.summarize(backtest.run_backtest(prof, *inputs), h)
+        ins, oos = s.loc["in-sample"], s.loc["out-of-sample"]
+        label = lambda p: p.removeprefix("strategies.").replace(".params.", ".")  # noqa: E731
+        rows.append({**{label(p): v for p, v in combo},
+                     "in_trades": ins["trades"], "in_vs_bench": ins["median_excess"], "in_beat%": ins["beat_bench"],
+                     "out_trades": oos["trades"], "out_vs_bench": oos["median_excess"], "out_beat%": oos["beat_bench"]})
+    table = pd.DataFrame(rows)
+    ok = table[table["in_trades"] >= args.min_trades].sort_values("in_vs_bench", ascending=False)
+    print(f"\n=== Tune {base.name}: {len(table)} combinations, ranked by in-sample median return vs benchmark "
+          f"({h}d, net). Choose on in-sample; out-of-sample is the honest check.")
+    with pd.option_context("display.width", 220, "display.float_format", "{:,.1f}".format):
+        print(ok.head(args.top).to_string(index=False))
+    dropped = len(table) - len(ok)
+    if dropped:
+        print(f"({dropped} combinations had fewer than {args.min_trades} in-sample trades and are hidden)")
+    return 0
+
+
+def cmd_dashboard(args, settings, db) -> int:
+    import subprocess
+
+    app = Path(__file__).parent / "dashboard" / "app.py"
+    db.close()
+    # Bound to this PC only: the dashboard can trigger screens and shows your data
+    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(args.port),
+                            "--server.address", "127.0.0.1", "--browser.gatherUsageStats", "false"])
+
+
+def cmd_telegram_setup(args, settings, db) -> int:
+    token = settings.telegram.bot_token
+    if not token:
+        print("No bot token yet. Steps:\n"
+              "  1. In Telegram, message @BotFather and send /newbot\n"
+              "  2. Copy config/secrets.example.yaml to config/secrets.yaml and paste the token as bot_token\n"
+              "  3. Send your new bot any message (e.g. 'hi')\n"
+              "  4. Run this command again")
+        return 1
+    chats = find_chat_ids(token)
+    if not chats:
+        print("The bot hasn't received any messages yet. Send it a message in Telegram, then run this again.")
+        return 1
+    for c in chats:
+        print(f"  chat {c['id']}  {c['name']}  ({c['type']})")
+    chosen = chats[-1]
+    path = save_secret("telegram", "chat_id", chosen["id"])
+    print(f"Saved chat_id {chosen['id']} ({chosen['name']}) to {path}. Next: python -m dse_screener telegram-test")
+    return 0
+
+
+def cmd_telegram_test(args, settings, db) -> int:
+    n = _deliverer(settings, dry_run=False)(
+        report.build_notice("✅ DSE Screener connected", "You'll get the daily summary here around 3pm, Sun–Thu.")
+    )
+    print(f"Sent {n} message(s). Check Telegram.")
+    return 0
+
+
+def cmd_status(args, settings, db) -> int:
+    first, last = db.date_range()
+    if not first:
+        print("Database is empty. Run: python -m dse_screener backfill")
+        return 0
+    per_day = db.rows_per_day()
+    print(f"Prices: {first} .. {last}, {len(per_day)} trading days, {int(per_day.sum()):,} rows")
+    print(f"Instruments per day: min {per_day.min()}, median {int(per_day.median())}, max {per_day.max()}")
+
+    universe = load_universe(args.universe)
+    prices = db.load_prices(universe.codes)
+    counts = prices.groupby("code").size().reindex(universe.codes, fill_value=0)
+    missing = counts[counts == 0].index.tolist()
+    print(f"{universe.name}: {len(universe.codes) - len(missing)}/{len(universe.codes)} codes have prices, "
+          f"days per code min {counts.min()} / max {counts.max()}")
+    if missing:
+        print(f"  no prices for: {', '.join(missing)}")
+
+    companies = db.load_companies(universe.codes)
+    news = db.load_news(universe.codes)
+    print(f"Fundamentals: {len(companies)}/{len(universe.codes)} company profiles, {len(news)} news items")
+    actions = db.load_corporate_actions(universe.codes)
+    print(f"Corporate actions: {len(actions)} (run `actions` to list)")
+    return 0
+
+
+COMMANDS = {
+    "backfill": cmd_backfill,
+    "ingest": cmd_ingest,
+    "fundamentals": cmd_fundamentals,
+    "actions": cmd_actions,
+    "quality": cmd_quality,
+    "screen": cmd_screen,
+    "daily": cmd_daily,
+    "report": cmd_report,
+    "dashboard": cmd_dashboard,
+    "backtest": cmd_backtest,
+    "tune": cmd_tune,
+    "telegram-setup": cmd_telegram_setup,
+    "telegram-test": cmd_telegram_test,
+    "status": cmd_status,
+}
+
+if __name__ == "__main__":
+    sys.exit(main())

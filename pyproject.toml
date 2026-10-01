@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dse-screener"
+version = "0.1.0"
+description = "Configurable multi-strategy stock screener for the Dhaka Stock Exchange"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.32",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "pandas>=2.2",
+    "pyyaml>=6.0",
+    "pydantic>=2.7",
+    "tzdata",      # zoneinfo on Windows has no system tz database
+    "truststore",  # use OS cert store; some DSE hosts serve an incomplete TLS chain
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+dashboard = ["streamlit>=1.40", "plotly>=5.20"]
+
+[project.scripts]
+dse = "dse_screener.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

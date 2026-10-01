@@ -1,0 +1,50 @@
+# Global settings. Strategy and filter numbers live in config/profiles/*.yaml.
+
+timezone: Asia/Dhaka
+
+paths:
+  db: data/dse.sqlite
+  raw: data/raw            # gzipped copies of every downloaded page, so data can be re-parsed later
+
+http:
+  user_agent: "Mozilla/5.0 (compatible; dse-screener/0.1; personal research)"
+  timeout_s: 120
+  delay_s: 2.0             # pause between requests, be polite to DSE
+  retries: 3
+
+sources:
+  dse_archive:
+    base_url: https://old.dsebd.org/day_end_archive.php
+  dse_company:
+    base_url: https://old.dsebd.org/displayCompany.php
+  dse_news:
+    base_url: https://old.dsebd.org/old_news.php
+
+ingest:
+  backfill_years: 2        # DSE archive keeps a rolling ~2-year window
+  chunk_days: 31           # one request per chunk (all instruments)
+  min_rows_per_day: 300    # fewer rows than this = day's data treated as incomplete
+
+daily:
+  # The `daily` job: wait for today's data -> refresh news -> screen all profiles -> Telegram.
+  trading_weekdays: [Sun, Mon, Tue, Wed, Thu]
+  not_before: "14:45"          # market closes 14:30; the archive publishes day-end data after that
+  retry_every_min: 5           # data not there yet -> try again
+  give_up_at: "16:30"          # still nothing -> holiday or outage, send a short notice
+  refresh_news: true           # news is used for record dates and the "recent news" lines (~1 min)
+  refresh_company_pages_every_days: 7   # category, dividends, shareholding change slowly
+
+report:
+  profiles: [swing, position]  # which profiles run daily, in this order
+  news_lookback_days: 14       # news shown under each pick
+  max_news_per_pick: 2
+  max_reasons_per_pick: 4
+
+telegram:
+  enabled: true
+  # bot_token and chat_id live in config/secrets.yaml (git-ignored), see secrets.example.yaml
+
+adjustments:
+  # DSE resets the reference price on the record date: (P - cash) / (1 + bonus).
+  # true = adjust history for cash dividends too (like DSE); false = bonus/rights only.
+  adjust_cash_dividends: true

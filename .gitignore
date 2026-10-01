@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Local data: database and raw downloads
+data/
+
+# Secrets (Telegram token, email password)
+config/secrets.yaml
+.env
+.env.local
+
+# Local tool settings
+.claude/
+
+# Node / Next.js (web/)
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts

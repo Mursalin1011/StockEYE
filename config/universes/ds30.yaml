@@ -1,0 +1,35 @@
+# DS30 constituents. DSE rebalances in January and July; update this list after each rebalance.
+# Source: old.dsebd.org/dse30_share.php, fetched 2026-09-30 (after the July 2026 rebalance).
+name: ds30
+as_of: 2026-09-30
+codes:
+  - ACMELAB
+  - BATBC
+  - BEACONPHAR
+  - BRACBANK
+  - BSC
+  - BSCPLC
+  - BSRMLTD
+  - BSRMSTEEL
+  - BXPHARMA
+  - CITYBANK
+  - DELTALIFE
+  - EBL
+  - FINEFOODS
+  - GP
+  - IDLC
+  - JAMUNAOIL
+  - LANKABAFIN
+  - LHB
+  - LOVELLO
+  - MJLBD
+  - MPETROLEUM
+  - OLYMPIC
+  - PADMAOIL
+  - POWERGRID
+  - PRIMEBANK
+  - PUBALIBANK
+  - RENATA
+  - ROBI
+  - SQURPHARMA
+  - WALTONHIL

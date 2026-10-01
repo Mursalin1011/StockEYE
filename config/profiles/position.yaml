@@ -1,0 +1,73 @@
+name: position
+description: 3-12 month holds. Strict on business quality.
+universe: ds30
+
+filters:
+  # "Good reputation, good business". Derived from the quality seed
+  # (GP, BATBC, SQURPHARMA, LHB, BSC), which all pass with a margin.
+  # Seed values for reference: category A, mcap >= 16,900 mn, dividend streak >= 11,
+  # cash dividend 5/5 years, EPS positive 5/5 years, P/E <= 20.8, strategic holding >= 44%.
+  # See `python -m dse_screener quality` for every metric; names are in quality.py METRICS.
+  quality:
+    enabled: true
+    rules:
+      category:              { in: [A] }
+      sector:                { not_in: [Insurance] }   # insurers report actuarially: no comparable EPS/P/E
+      market_cap_mn:         { min: 5000 }   # BDT 5 bn
+      dividend_streak:       { min: 5 }      # consecutive years with any dividend
+      cash_dividend_years_5: { min: 5 }      # cash dividend every one of the last 5 years
+      eps_positive_years_5:  { min: 5 }      # profitable every one of the last 5 years
+      pe:                    { max: 25 }
+      strategic_pct:         { min: 25 }     # sponsor + govt; 25 keeps widely-held banks like EBL (29.4%)
+
+# Every number is optional: anything left out uses the default in src/dse_screener/strategies/<name>.py
+strategies:
+  quiet_accumulation:
+    weight: 1.0
+    params:
+      price_window_days: 90
+      max_price_range_pct: 18
+      vol_short_days: 20
+      vol_baseline_days: 90
+      min_volume_ratio: 1.5
+      min_price_change_pct: -2   # a bigger dip on high volume may be selling (distribution)
+      max_price_change_pct: 8
+      min_divergence: 3
+  base_breakout:
+    weight: 0.8
+    params:
+      base_days: 60
+      max_base_range_pct: 15
+      min_volume_x: 2.0
+      max_days_since: 5
+  big_hands:
+    weight: 0.7
+    # 2-year check: on its own, worse than a random day at 60 days (larger trades can be selling too).
+    # Used as confirmation of the other strategies instead.
+    role: confirm
+    params:
+      short_days: 20
+      baseline_days: 90
+      min_trade_size_growth: 1.3
+
+backtest:
+  horizons: [20, 60, 90]       # trading days held
+  primary_horizon: 60
+  cost_pct: 1.0                # round trip, %
+  in_sample_until: 2025-12-31  # tune on data up to here; 2026 is the untouched test
+
+ranking:
+  top_n: 10
+  min_score: 40
+  confluence_bonus: 10
+  record_date_window_days: 30   # longer windows here, so look further around the record date
+  # 0 = show the record date as a note only. 2-year check (small sample, n=18): position signals
+  # near record dates did *better* (+2.4% median at 60d vs -1.2%), so no penalty here. Swing differs.
+  record_date_penalty: 0
+  boosts:
+    - { metric: institute_change_pp, when: { min: 1.0 }, points: 5, label: "institutions adding",
+        detail: "institutional holding {value:+.1f} pts" }
+    - { metric: eps_cagr_3y,         when: { min: 5 },   points: 5, label: "EPS growing",
+        detail: "{value:+.0f}%/yr over 3 years" }
+    - { metric: dividend_yield,      when: { min: 5 },   points: 3, label: "dividend yield",
+        detail: "{value:.1f}%" }
