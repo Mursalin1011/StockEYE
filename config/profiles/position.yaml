@@ -20,6 +20,14 @@ filters:
       pe:                    { max: 25 }
       strategic_pct:         { min: 25 }     # sponsor + govt; 25 keeps widely-held banks like EBL (29.4%)
 
+  # RSI / MACD on the signal day. Metric names: see src/dse_screener/technical.py (TECH_METRICS).
+  # Off: backtest 2026-10-01 found only noise-sized differences (11-31 trades per period).
+  # Revisit when more history exists (see docs/02-mvp-spec.md, "Technical filter results").
+  technical:
+    enabled: false
+    params: { rsi_window: 14, macd_fast: 12, macd_slow: 26, macd_signal: 9 }
+    rules: {}
+
 # Every number is optional: anything left out uses the default in src/dse_screener/strategies/<name>.py
 strategies:
   quiet_accumulation:

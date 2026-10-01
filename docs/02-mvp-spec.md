@@ -223,7 +223,26 @@ swing picks returned a median +0.7% over 20 days vs +1.4% for the basket, beatin
 pattern alone shows no edge in DS30 over these two years. Next ideas to test: market-relative volume (built, off by
 default), RSI/MACD filters, and a wider universe than DS30 (where volume anomalies may matter more).
 
+| 2026-10-01 | **Technical filter**: swing requires a bullish MACD cross within 10 trading days (only rule that helped both periods); position has no technical filter (differences were noise). Every pick shows an RSI/MACD line. |
 | 2026-10-01 | Dashboard moved to **Next.js + FastAPI** to grow into a platform; RSI(14) and MACD(12,26,9) added (`indicators.py`) and charted; not yet used by strategies. |
+
+### Technical filter results (2026-10-01)
+
+Each rule was applied on the signal day, then backtested (next-day entry, 1% cost, vs the same-day quality basket).
+Median return vs basket, tuning period (2025) → test period (2026). Baseline swing: −1.3 → +0.3; position: −0.2 → +0.1.
+
+| Profile | Rule | 2025 | 2026 | Verdict |
+|---|---|---|---|---|
+| swing | RSI ≤ 50 / 60 / 70 | −0.6 / −0.8 / −1.0 | −1.4 / −0.2 / −0.1 | Better in 2025, worse in 2026: noise |
+| swing | RSI ≥ 40 / 50 | −1.5 / −1.5 | +0.3 / +0.3 | No effect |
+| swing | MACD histogram > 0 | −1.8 | +1.0 | Periods disagree |
+| swing | MACD histogram rising | −1.1 | +0.4 | Small, inconsistent |
+| swing | **Bullish MACD cross ≤ 10 days** | **−0.5** | **+1.4** | **Better in both: enabled** |
+| swing | Bullish MACD cross ≤ 3 days | −1.7 | +2.6 | Periods disagree |
+| position | any RSI/MACD rule | −2.2 … +0.2 | −2.0 … +4.2 | 3–31 trades per cell: noise, kept off |
+
+Swing with the cross ≤ 10 rule, 20-day hold: 91 trades, median **+0.3** vs basket (was −0.6), beat rate **52%** (was 43%).
+About 20 variants were tried, so some luck is likely in the winner. Re-check this as history grows.
 
 ## 10. Open questions
 
