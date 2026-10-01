@@ -15,7 +15,8 @@ import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
 
 from .. import backtest, engine, indicators, quality, report, rules
-from ..config import CONFIG_DIR, list_profiles, load_profile, load_settings, load_universe
+from ..config import CONFIG_DIR, list_profiles, load_profile, load_settings
+from ..universes import universe_codes as resolve_universe
 from ..db import Database
 from ..strategies import REGISTRY
 
@@ -61,18 +62,20 @@ def _data_version(db: Database) -> tuple:
     return last_price, last_run
 
 
-def universe_codes() -> list[str]:
-    return sorted({c for n in list_profiles(settings) for c in load_universe(load_profile(n).universe).codes})
+def universe_codes(db: Database) -> list[str]:
+    """Union of every profile's universe (resolved from stored company pages for query universes)."""
+    return cached(("universe", _data_version(db)), 600, lambda: sorted(
+        {c for n in list_profiles(settings) for c in resolve_universe(load_profile(n).universe, db)}))
 
 
 def adjusted_prices(db: Database) -> pd.DataFrame:
     return cached(("prices", _data_version(db)), 600,
-                  lambda: engine.load_adjusted_prices(db, settings, universe_codes()))
+                  lambda: engine.load_adjusted_prices(db, settings, universe_codes(db)))
 
 
 def quality_metrics(db: Database) -> pd.DataFrame:
     return cached(("metrics", _data_version(db)), 600,
-                  lambda: quality.compute_quality_metrics(db, universe_codes()))
+                  lambda: quality.compute_quality_metrics(db, universe_codes(db)))
 
 
 def _profile(name: str):
@@ -95,7 +98,7 @@ def meta(db: Database = Depends(get_db)):
         "prices_from": first, "prices_to": last,
         "profiles": [{"name": n, "description": load_profile(n).description} for n in list_profiles(settings)],
         "strategies": {name: cls.title for name, cls in REGISTRY.items()},
-        "universe": universe_codes(),
+        "universe": universe_codes(db),
         "disclaimer": report.DISCLAIMER,
     }
 
@@ -165,7 +168,7 @@ def history(db: Database = Depends(get_db)):
 
 @app.get("/api/stocks")
 def stocks(db: Database = Depends(get_db)):
-    codes = universe_codes()
+    codes = universe_codes(db)
     comp = db.load_companies(codes)[["code", "name", "sector", "category", "market_cap_mn"]]
     m = quality_metrics(db).drop(columns=["sector", "category", "market_cap_mn"], errors="ignore").reset_index()
     p = adjusted_prices(db)
@@ -181,7 +184,7 @@ def stocks(db: Database = Depends(get_db)):
 
 @app.get("/api/stocks/{code}")
 def stock(code: str, db: Database = Depends(get_db)):
-    if code not in universe_codes():
+    if code not in universe_codes(db):
         raise HTTPException(404, f"{code} is not in the universe")
     comp = db.load_companies([code])
     m = quality_metrics(db)
@@ -272,7 +275,7 @@ def backtest_view(profile: str, db: Database = Depends(get_db)):
     mtime = (CONFIG_DIR / "profiles" / f"{profile}.yaml").stat().st_mtime
 
     def run():
-        codes = load_universe(prof.universe).codes
+        codes = resolve_universe(prof.universe, db)
         res = backtest.run_backtest(prof, adjusted_prices(db), quality_metrics(db), db.load_corporate_actions(codes))
         summaries = {str(h): records(backtest.summarize(res, h).reset_index()) for h in res.horizons}
         return {

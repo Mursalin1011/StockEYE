@@ -10,8 +10,9 @@ from typing import Callable
 
 import pandas as pd
 
-from . import engine, fundamentals, ingest, report
-from .config import Settings, list_profiles, load_profile, load_universe
+from . import engine, fundamentals, ingest, quality, report, rules
+from .config import Settings, list_profiles, load_profile
+from .universes import universe_codes
 from .db import Database
 from .sources import DseArchiveSource, DseCompanySource, DseNewsSource, PriceSource
 from .sources.http import PoliteClient
@@ -69,7 +70,7 @@ def run_daily(
         sleep(cfg.retry_every_min * 60)
 
     profiles = [load_profile(name) for name in list_profiles(settings)]
-    codes = sorted({c for p in profiles for c in load_universe(p.universe).codes})
+    codes = sorted({c for p in profiles for c in universe_codes(p.universe, db)})
     refresh(codes, day)
 
     results = []
@@ -88,20 +89,46 @@ def run_daily(
 
 
 def _refresh(settings: Settings, db: Database, client: PoliteClient, codes: list[str], day: date) -> None:
+    """Keep company data and news fresh without making the 3pm job slow:
+    - new listings: company page + news (usually none)
+    - company pages: the stalest N per day, so every stock is refreshed about weekly
+    - news: daily, only for stocks that pass at least one profile's quality filter (the ones that
+      can become picks, and whose dividend/bonus adjustment must be current)"""
     cfg = settings.daily
+    company_src = DseCompanySource(client, settings.sources.dse_company.base_url)
+    news_src = DseNewsSource(client, settings.sources.dse_news.base_url)
+    fundamentals.discover_instruments(db, company_src, news_src)
+    codes = sorted(set(codes) | set(_all_universe_codes(settings, db)))
+
     companies = db.load_companies(codes)
     fetched = pd.to_datetime(companies.set_index("code")["fetched_at"], utc=True).dt.date
     stale_before = day - timedelta(days=cfg.refresh_company_pages_every_days)
-    stale = [c for c in codes if c not in fetched.index or fetched[c] <= stale_before]
-    company_src = DseCompanySource(client, settings.sources.dse_company.base_url)
-    news_src = DseNewsSource(client, settings.sources.dse_news.base_url)
+    stale = sorted((c for c in codes if c not in fetched.index or fetched[c] <= stale_before),
+                   key=lambda c: fetched.get(c, date.min))[: cfg.company_pages_per_day]
     if stale:
-        log.info("Refreshing company pages for %d stocks", len(stale))
+        log.info("Refreshing company pages for %d stocks (stalest first)", len(stale))
         fundamentals.refresh_fundamentals(db, company_src, news_src, stale, company_pages=True, news=False)
-    if cfg.refresh_news:
-        fundamentals.refresh_fundamentals(db, company_src, news_src, codes, company_pages=False, news=True)
-    if stale or cfg.refresh_news:
-        fundamentals.rebuild_corporate_actions(db, codes)
+
+    news_codes = _screenable(settings, db, codes)
+    if cfg.refresh_news and news_codes:
+        log.info("Refreshing news for %d quality-passing stocks", len(news_codes))
+        fundamentals.refresh_fundamentals(db, company_src, news_src, news_codes, company_pages=False, news=True)
+    fundamentals.rebuild_corporate_actions(db, codes)
+
+
+def _all_universe_codes(settings: Settings, db: Database) -> list[str]:
+    return sorted({c for n in list_profiles(settings) for c in universe_codes(load_profile(n).universe, db)})
+
+
+def _screenable(settings: Settings, db: Database, codes: list[str]) -> list[str]:
+    """Codes that pass the quality filter of at least one profile (from stored data)."""
+    metrics = quality.compute_quality_metrics(db, codes)
+    keep: set[str] = set()
+    for name in list_profiles(settings):
+        qf = load_profile(name).filters.get("quality")
+        res = rules.evaluate(metrics, qf.rules if qf and qf.enabled else {})
+        keep |= set(res.index[res["passed"]])
+    return sorted(keep)
 
 
 def _sleep_until(clock, sleep, target, why: str) -> None:

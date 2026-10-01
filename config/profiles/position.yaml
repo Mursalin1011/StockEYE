@@ -1,6 +1,6 @@
 name: position
 description: 3-12 month holds. Strict on business quality.
-universe: ds30
+universe: all_equities          # every active DSE equity; `ds30` for the blue chips only
 
 filters:
   # "Good reputation, good business". Derived from the quality seed
@@ -11,9 +11,10 @@ filters:
   quality:
     enabled: true
     rules:
-      category:              { in: [A] }
+      category:              { in: [A] }     # default: all A-category stocks
       sector:                { not_in: [Insurance] }   # insurers report actuarially: no comparable EPS/P/E
-      market_cap_mn:         { min: 5000 }   # BDT 5 bn
+      avg_value_mn_60:       { min: 5 }      # liquid enough to hold for months: >= BDT 5 mn/day (60-day avg)
+      traded_days_pct_60:    { min: 90 }
       dividend_streak:       { min: 5 }      # consecutive years with any dividend
       cash_dividend_years_5: { min: 5 }      # cash dividend every one of the last 5 years
       eps_positive_years_5:  { min: 5 }      # profitable every one of the last 5 years

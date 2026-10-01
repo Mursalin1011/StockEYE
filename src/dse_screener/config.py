@@ -61,6 +61,7 @@ class DailyConfig(BaseModel):
     give_up_at: time = time(16, 30)
     refresh_news: bool = True
     refresh_company_pages_every_days: int = 7
+    company_pages_per_day: int = 60      # cap, so the 3pm job stays fast; stalest pages first
 
     def is_trading_weekday(self, d: date) -> bool:
         return d.weekday() in {WEEKDAYS[w] for w in self.trading_weekdays}
@@ -103,10 +104,19 @@ class Settings(BaseModel):
         return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+class UniverseQuery(BaseModel):
+    """Resolved from stored company pages at run time, so new listings join automatically."""
+
+    instrument_types: list[str] = ["Equity"]
+    active_only: bool = True
+    exclude: list[str] = []
+
+
 class Universe(BaseModel):
     name: str
     as_of: date | None = None
-    codes: list[str]
+    codes: list[str] = []            # a fixed list (e.g. ds30) ...
+    query: UniverseQuery | None = None   # ... or a query over the companies table (e.g. all_equities)
 
 
 class FilterConfig(BaseModel):

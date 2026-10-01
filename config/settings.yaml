@@ -31,8 +31,9 @@ daily:
   not_before: "14:45"          # market closes 14:30; the archive publishes day-end data after that
   retry_every_min: 5           # data not there yet -> try again
   give_up_at: "16:30"          # still nothing -> holiday or outage, send a short notice
-  refresh_news: true           # news is used for record dates and the "recent news" lines (~1 min)
+  refresh_news: true           # daily, for stocks passing a quality filter (record dates, news lines)
   refresh_company_pages_every_days: 7   # category, dividends, shareholding change slowly
+  company_pages_per_day: 60    # spread over the week so the 3pm job stays fast (stalest first)
 
 report:
   profiles: [swing, position]  # which profiles run daily, in this order

@@ -9,9 +9,10 @@ import pandas as pd
 
 from . import quality, rules, technical
 from .adjust import apply_adjustments
-from .config import Profile, Settings, StrategyConfig, load_universe
+from .config import Profile, Settings, StrategyConfig
 from .db import Database
 from .strategies import REGISTRY, Strategy
+from .universes import universe_codes
 
 SIGNAL_COLUMNS = ["code", "strategy", "title", "role", "score", "weighted", "reasons", "metrics"]
 
@@ -68,8 +69,11 @@ def evaluate_profile(
     tf_cfg = profile.filters.get("technical")
     as_of_ts = pd.Timestamp(as_of)
     signals, skipped, tech_notes, tech_excluded = [], [], {}, {}
+    upto = prices[prices["date"] <= as_of_ts]
+    by_code = {c: g for c, g in upto.groupby("code", sort=False)}   # one pass, not one scan per stock
     for code in passed:
-        g = prices[(prices["code"] == code) & (prices["date"] <= as_of_ts)].reset_index(drop=True)
+        g = by_code.get(code)
+        g = g.reset_index(drop=True) if g is not None else pd.DataFrame(columns=prices.columns)
         if g.empty or g["date"].iloc[-1] != as_of_ts or not g["volume"].iloc[-1]:
             skipped.append(code)
             continue
@@ -153,7 +157,7 @@ def rank(
 
 
 def run_profile(db: Database, settings: Settings, profile: Profile, as_of: date | None = None) -> ScreenResult:
-    codes = load_universe(profile.universe).codes
+    codes = universe_codes(profile.universe, db)
     prices = load_adjusted_prices(db, settings, codes)
     as_of = as_of or prices["date"].max().date()
     metrics = quality.compute_quality_metrics(db, codes)

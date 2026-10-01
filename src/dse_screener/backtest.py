@@ -65,10 +65,12 @@ def run_backtest(
     use_tech = bool(tf_cfg and tf_cfg.enabled and tf_cfg.rules)
 
     signal_rows, fwd_rows = [], []
+    by_code = {c: g for c, g in prices.groupby("code", sort=False)}
     for code in passed:
-        g = prices[prices["code"] == code].sort_values("date").reset_index(drop=True)
-        if g.empty:
+        g = by_code.get(code)
+        if g is None or g.empty:
             continue
+        g = g.sort_values("date").reset_index(drop=True)
         traded = g["volume"].fillna(0) > 0
         fwd = forward_returns(g, horizons, bt.cost_pct)
         fwd["date"], fwd["code"], fwd["traded"] = g["date"], code, traded

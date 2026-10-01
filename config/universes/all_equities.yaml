@@ -1,0 +1,8 @@
+# Every active equity listed on DSE (Main board), resolved from stored company pages each run.
+# New listings join automatically once `discover` (run by the daily job) has fetched their page.
+# Which of them are screened is decided by each profile's quality filter (category, liquidity, ...).
+name: all_equities
+query:
+  instrument_types: [Equity]
+  active_only: true
+  exclude: []        # add codes here to skip them entirely

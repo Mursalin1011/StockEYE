@@ -13,7 +13,8 @@ import pandas as pd
 import yaml
 
 from . import backtest, daily, engine, fundamentals, ingest, quality, report, rules
-from .config import CONFIG_DIR, Profile, list_profiles, load_profile, load_settings, load_universe, save_secret
+from .config import CONFIG_DIR, Profile, list_profiles, load_profile, load_settings, save_secret
+from .universes import universe_codes
 from .notify import TelegramNotifier, find_chat_ids
 from .notify.telegram import TelegramError
 from .db import Database
@@ -41,10 +42,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--date", type=_parse_date)
 
     p = sub.add_parser("fundamentals", help="fetch company pages + news, rebuild corporate actions")
-    p.add_argument("--universe", default="ds30")
+    p.add_argument("--universe", default="all_equities")
+
+    sub.add_parser("discover", help="fetch company pages for all unknown instruments (new listings), news for equities")
 
     p = sub.add_parser("actions", help="rebuild corporate actions from stored news and list them")
-    p.add_argument("--universe", default="ds30")
+    p.add_argument("--universe", default="all_equities")
 
     p = sub.add_parser("quality", help="quality metrics and filter result per stock")
     p.add_argument("--profile", default="position", help="profile whose quality rules to apply")
@@ -87,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("telegram-test", help="send a test message")
 
     p = sub.add_parser("status", help="show what is stored")
-    p.add_argument("--universe", default="ds30")
+    p.add_argument("--universe", default="all_equities")
 
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -130,7 +133,7 @@ def cmd_ingest(args, settings, db) -> int:
 
 def cmd_fundamentals(args, settings, db) -> int:
     client = _client(settings)
-    codes = load_universe(args.universe).codes
+    codes = universe_codes(args.universe, db)
     report = fundamentals.refresh_fundamentals(
         db,
         DseCompanySource(client, settings.sources.dse_company.base_url),
@@ -143,8 +146,23 @@ def cmd_fundamentals(args, settings, db) -> int:
     return cmd_actions(args, settings, db) or (1 if report.errors else 0)
 
 
+def cmd_discover(args, settings, db) -> int:
+    client = _client(settings)
+    report = fundamentals.discover_instruments(
+        db, DseCompanySource(client, settings.sources.dse_company.base_url),
+        DseNewsSource(client, settings.sources.dse_news.base_url),
+    )
+    comp = db.load_companies()
+    print(f"Discovered {report.companies} instruments, {report.news_added} news items. Now known: "
+          f"{len(comp)} ({(comp['instrument_type'] == 'Equity').sum()} equities)")
+    print(comp.groupby(["instrument_type", "category"], dropna=False).size().to_string())
+    for err in report.errors:
+        print(f"  FAILED {err}")
+    return 1 if report.errors else 0
+
+
 def cmd_actions(args, settings, db) -> int:
-    codes = load_universe(args.universe).codes
+    codes = universe_codes(args.universe, db)
     actions = fundamentals.rebuild_corporate_actions(db, codes)
     print(f"Corporate actions: {len(actions)} events for {actions['code'].nunique() if len(actions) else 0} stocks")
     _print_actions(actions)
@@ -172,8 +190,8 @@ def _print_actions(actions) -> None:
 
 def cmd_quality(args, settings, db) -> int:
     profile = load_profile(args.profile)
-    codes = load_universe(args.universe or profile.universe).codes
-    seed = set(load_universe("quality_seed").codes)
+    codes = universe_codes(args.universe or profile.universe, db)
+    seed = set(universe_codes("quality_seed", db))
     metrics = quality.compute_quality_metrics(db, codes)
     qf = profile.filters.get("quality")
     result = rules.evaluate(metrics, qf.rules if qf and qf.enabled else {})
@@ -292,14 +310,15 @@ def _profile_with(name: str, overrides: list[str]) -> Profile:
 
 
 def _backtest_inputs(db, settings, profile):
-    codes = load_universe(profile.universe).codes
+    codes = universe_codes(profile.universe, db)
     return (engine.load_adjusted_prices(db, settings, codes), quality.compute_quality_metrics(db, codes),
             db.load_corporate_actions(codes))
 
 
 def _fmt_summary(df: pd.DataFrame) -> str:
-    cols = {"trades": "trades", "median_ret": "median%", "hit_rate": "hit%", "median_bench": "bench%",
-            "median_excess": "vs bench%", "beat_bench": "beat%", "worst": "worst%", "best": "best%"}
+    cols = {"trades": "trades", "median_ret": "median%", "mean_ret": "mean%", "hit_rate": "hit%",
+            "median_bench": "bench%", "median_excess": "vs bench (median)", "mean_excess": "vs bench (mean)",
+            "beat_bench": "beat%", "worst": "worst%", "best": "best%"}
     out = df[list(cols)].rename(columns=cols)
     with pd.option_context("display.width", 200, "display.float_format", "{:,.1f}".format):
         return out.to_string()
@@ -410,19 +429,19 @@ def cmd_status(args, settings, db) -> int:
     print(f"Prices: {first} .. {last}, {len(per_day)} trading days, {int(per_day.sum()):,} rows")
     print(f"Instruments per day: min {per_day.min()}, median {int(per_day.median())}, max {per_day.max()}")
 
-    universe = load_universe(args.universe)
-    prices = db.load_prices(universe.codes)
-    counts = prices.groupby("code").size().reindex(universe.codes, fill_value=0)
+    codes = universe_codes(args.universe, db)
+    prices = db.load_prices(codes)
+    counts = prices.groupby("code").size().reindex(codes, fill_value=0)
     missing = counts[counts == 0].index.tolist()
-    print(f"{universe.name}: {len(universe.codes) - len(missing)}/{len(universe.codes)} codes have prices, "
+    print(f"{args.universe}: {len(codes) - len(missing)}/{len(codes)} codes have prices, "
           f"days per code min {counts.min()} / max {counts.max()}")
     if missing:
         print(f"  no prices for: {', '.join(missing)}")
 
-    companies = db.load_companies(universe.codes)
-    news = db.load_news(universe.codes)
-    print(f"Fundamentals: {len(companies)}/{len(universe.codes)} company profiles, {len(news)} news items")
-    actions = db.load_corporate_actions(universe.codes)
+    companies = db.load_companies(codes)
+    news = db.load_news(codes)
+    print(f"Fundamentals: {len(companies)}/{len(codes)} company profiles, {len(news)} news items")
+    actions = db.load_corporate_actions(codes)
     print(f"Corporate actions: {len(actions)} (run `actions` to list)")
     return 0
 
@@ -431,6 +450,7 @@ COMMANDS = {
     "backfill": cmd_backfill,
     "ingest": cmd_ingest,
     "fundamentals": cmd_fundamentals,
+    "discover": cmd_discover,
     "actions": cmd_actions,
     "quality": cmd_quality,
     "screen": cmd_screen,

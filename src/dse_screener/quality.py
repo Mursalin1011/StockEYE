@@ -20,7 +20,11 @@ METRICS = {
     "sponsor_pct": "Sponsor/director holding, %",
     "strategic_pct": "Sponsor/director + government holding, %",
     "institute_change_pp": "Change in institutional holding over stored snapshots, % points",
+    "avg_value_mn_60": "Liquidity: average daily traded value over the last 60 trading days, BDT million",
+    "traded_days_pct_60": "Share of the last 60 trading days with any trade, %",
 }
+
+LIQUIDITY_DAYS = 60
 
 
 def compute_quality_metrics(db: Database, codes: list[str]) -> pd.DataFrame:
@@ -30,6 +34,10 @@ def compute_quality_metrics(db: Database, codes: list[str]) -> pd.DataFrame:
     holding = db.load_table("shareholding", codes)
     prices = db.load_prices(codes)
     last_close = prices.sort_values("date").groupby("code")["close"].last()
+    recent_days = sorted(prices["date"].unique())[-LIQUIDITY_DAYS:]
+    recent = prices[prices["date"].isin(recent_days)]
+    avg_value = recent.groupby("code")["value_mn"].sum() / len(recent_days)    # no-trade days count as 0
+    traded_pct = recent.assign(t=recent["volume"].fillna(0) > 0).groupby("code")["t"].sum() / len(recent_days) * 100
 
     rows = []
     for code in codes:
@@ -76,6 +84,10 @@ def compute_quality_metrics(db: Database, codes: list[str]) -> pd.DataFrame:
                 # State-owned companies (BSC, oil companies) show 0% sponsor but ~50%+ govt
                 "strategic_pct": h["sponsor"].iloc[-1] + h["govt"].iloc[-1] if len(h) else None,
                 "institute_change_pp": h["institute"].iloc[-1] - h["institute"].iloc[0] if len(h) > 1 else None,
+                "avg_value_mn_60": avg_value.get(code),
+                "traded_days_pct_60": traded_pct.get(code),
             }
         )
-    return pd.DataFrame(rows).set_index("code")
+    columns = ["code", "sector", "category", *METRICS]
+    # An empty universe (e.g. fresh install before `discover`) must give an empty table, not crash
+    return pd.DataFrame(rows, columns=list(dict.fromkeys(columns))).set_index("code")

@@ -1,6 +1,6 @@
 name: swing
 description: 2-6 week holds. Lighter quality bar, more weight on price/volume.
-universe: ds30
+universe: all_equities          # every active DSE equity; `ds30` for the blue chips only
 
 filters:
   # Looser than `position`: a swing trade relies more on the price/volume setup,
@@ -8,9 +8,10 @@ filters:
   quality:
     enabled: true
     rules:
-      category:              { in: [A, B] }
+      category:              { in: [A] }               # default: all A-category stocks
       sector:                { not_in: [Insurance] }   # insurers report actuarially: no comparable EPS/P/E
-      market_cap_mn:         { min: 3000 }
+      avg_value_mn_60:       { min: 3 }                # liquid: >= BDT 3 mn traded per day (60-day average)
+      traded_days_pct_60:    { min: 90 }               # trades on at least 90% of days
       dividend_streak:       { min: 3 }
       eps_positive_years_5:  { min: 4 }
       pe:                    { max: 35 }

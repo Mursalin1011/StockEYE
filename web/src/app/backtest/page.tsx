@@ -18,6 +18,7 @@ function SummaryTable({ rows }: { rows: SummaryRow[] }) {
           <Th right title="Share of trades with a positive return">Hit rate</Th>
           <Th right title="Median return of the quality basket bought the same day">Basket</Th>
           <Th right title="Median of (pick return - basket return)">Vs basket</Th>
+          <Th right title="Average of (pick return - basket return). Trend strategies earn from a few big winners, which the median hides">Vs basket (avg)</Th>
           <Th right title="Share of trades that beat the basket">Beat basket</Th>
           <Th right>Worst</Th>
           <Th right>Best</Th>
@@ -32,6 +33,7 @@ function SummaryTable({ rows }: { rows: SummaryRow[] }) {
             <Td right>{pct(r.hit_rate, 0, false)}</Td>
             <Td right>{pct(r.median_bench)}</Td>
             <Td right className={signClass(r.median_excess)}>{pct(r.median_excess)}</Td>
+            <Td right className={signClass(r.mean_excess)}>{pct(r.mean_excess)}</Td>
             <Td right>{pct(r.beat_bench, 0, false)}</Td>
             <Td right className="text-down">{pct(r.worst)}</Td>
             <Td right className="text-up">{pct(r.best)}</Td>

@@ -21,10 +21,16 @@ def apply_adjustments(
     out["volume_adj"] = 1.0
     if not actions.empty:
         acts = actions.dropna(subset=["ex_date"])
+        rows_by_code = out.groupby("code", sort=False).indices    # row positions per stock, computed once
+        date_col = out.columns.get_loc("date")
+        p_col, v_col = out.columns.get_loc("price_adj"), out.columns.get_loc("volume_adj")
         for ev in acts.itertuples(index=False):
-            mask = (out["code"] == ev.code) & (out["date"] < pd.Timestamp(ev.ex_date))
-            out.loc[mask, "price_adj"] *= ev.price_factor if include_cash else ev.bonus_factor
-            out.loc[mask, "volume_adj"] *= ev.volume_factor
+            idx = rows_by_code.get(ev.code)
+            if idx is None:
+                continue
+            before = idx[out.iloc[idx, date_col].to_numpy() < pd.Timestamp(ev.ex_date).to_datetime64()]
+            out.iloc[before, p_col] *= ev.price_factor if include_cash else ev.bonus_factor
+            out.iloc[before, v_col] *= ev.volume_factor
 
     for col in PRICE_FIELDS:
         out[col] = out[col] * out["price_adj"]

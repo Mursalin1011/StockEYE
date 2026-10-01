@@ -69,4 +69,4 @@ def evaluate(metrics: pd.DataFrame, rules: dict[str, Rule]) -> pd.DataFrame:
             if (reason := rule.check(row.get(name))) is not None
         ]
         results.append({"code": code, "passed": not failures, "failures": failures})
-    return pd.DataFrame(results).set_index("code")
+    return pd.DataFrame(results, columns=["code", "passed", "failures"]).set_index("code")

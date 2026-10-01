@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -43,6 +44,30 @@ def refresh_fundamentals(
         except Exception as exc:  # one company failing shouldn't stop the rest
             log.error("[%d/%d] %s failed: %s", i, len(codes), code, exc)
             report.errors.append(f"{code}: {exc}")
+    return report
+
+
+NOT_LISTED_SHARES = re.compile(r"^TB\d|BOND|SUKUK|GSB|^ZCB")   # T-bills and bonds: no company page needed
+
+
+def discover_instruments(
+    db: Database, company_src: DseCompanySource, news_src: DseNewsSource, news_for_equities: bool = True
+) -> FundamentalsReport:
+    """Fetch company pages for every traded instrument we don't know yet (new listings included),
+    so instrument type (Equity / Mutual Fund) and category come from DSE itself. Then fetch news
+    for the new equities, which the dividend/bonus adjustment needs."""
+    traded = [r[0] for r in db.conn.execute("SELECT DISTINCT code FROM daily_prices")]
+    known = set(db.load_companies()["code"])
+    todo = sorted(c for c in traded if c not in known and not NOT_LISTED_SHARES.search(c))
+    log.info("Discovering %d instruments", len(todo))
+    report = refresh_fundamentals(db, company_src, news_src, todo, company_pages=True, news=False)
+    if news_for_equities:
+        comp = db.load_companies(todo)
+        equities = comp.loc[comp["instrument_type"] == "Equity", "code"].tolist()
+        log.info("Fetching news for %d new equities", len(equities))
+        news = refresh_fundamentals(db, company_src, news_src, equities, company_pages=False, news=True)
+        report.news_added, report.errors = news.news_added, report.errors + news.errors
+        rebuild_corporate_actions(db, equities)
     return report
 
 

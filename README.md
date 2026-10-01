@@ -53,9 +53,10 @@ Then open http://127.0.0.1:3000. Both servers listen on this PC only. Or start t
 
 Every trading day, for each profile (`swing`, `position`):
 
-1. **Quality filter**: rules such as Category A, dividend streak, profitable 5/5 years, P/E cap,
-   sponsor + government holding. Stocks that fail are excluded. These rules came from what your
-   seed stocks (GP, BATBC, SQURPHARMA, LHB, BSC) have in common.
+1. **Quality filter** over all ~320 active DSE equities: by default **Category A**, liquid (≥ BDT 3 mn
+   traded per day for swing, 5 mn for position), no insurers, plus dividend streak, profitable years,
+   P/E cap and sponsor + government holding. About 70 stocks pass for swing, 50 for position. The rules
+   came from what your seed stocks (GP, BATBC, SQURPHARMA, LHB, BSC) have in common.
 2. **Strategies** run on the price history, adjusted for dividends and bonus shares. Each returns a
    0–100 score plus reasons:
    - **Quiet accumulation** (your method): volume well above its own baseline, price nearly flat,
@@ -74,7 +75,7 @@ All numbers are in YAML, so no code changes are needed:
 |---|---|
 | `config/profiles/swing.yaml`, `position.yaml` | quality rules, strategy parameters and weights, ranking, backtest settings |
 | `config/settings.yaml` | data sources, the daily job (times, retries), Telegram summary, adjustments |
-| `config/universes/ds30.yaml` | which stocks are scanned (update after DSE's Jan/Jul rebalance) |
+| `config/universes/all_equities.yaml` | default universe: every active DSE equity (resolved from stored company pages, so new listings join automatically); `ds30.yaml` is the blue-chip list |
 | `config/secrets.yaml` | Telegram token and chat id (git-ignored, never shown in the dashboard) |
 
 Example: require stronger volume for quiet accumulation in the swing profile:
@@ -118,7 +119,8 @@ on the later, untouched test period, which is the honest check.
 $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener backfill        # download all available history (~2 years), resumable
 & $py -m dse_screener ingest          # fetch today (or --date 2026-09-30)
-& $py -m dse_screener fundamentals    # company pages + news, rebuild dividend/bonus events
+& $py -m dse_screener discover        # company pages for new listings (the daily job does this too)
+& $py -m dse_screener fundamentals --universe all_equities   # refresh company pages + news
 & $py -m dse_screener actions         # list dividend/bonus events, checked against ex-date opens
 & $py -m dse_screener quality --profile position
 & $py -m dse_screener screen          # run all profiles, saved (add --date, --all-signals)

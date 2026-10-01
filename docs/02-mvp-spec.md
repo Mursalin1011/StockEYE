@@ -223,6 +223,7 @@ swing picks returned a median +0.7% over 20 days vs +1.4% for the basket, beatin
 pattern alone shows no edge in DS30 over these two years. Next ideas to test: market-relative volume (built, off by
 default), RSI/MACD filters, and a wider universe than DS30 (where volume anomalies may matter more).
 
+| 2026-10-01 | **Universe = all active DSE equities** (`all_equities`, resolved from company pages; 322 today: 158 A, 74 B, 126 Z). Default **Category A** + liquidity (60-day avg value ≥ BDT 3 mn swing / 5 mn position, traded ≥ 90% of days) instead of a market-cap floor. 71 pass swing, 53 position. The daily job discovers new listings, refreshes the 60 stalest company pages, and refreshes news only for quality-passing stocks. |
 | 2026-10-01 | **Technical filter**: swing requires a bullish MACD cross within 10 trading days (only rule that helped both periods); position has no technical filter (differences were noise). Every pick shows an RSI/MACD line. |
 | 2026-10-01 | Dashboard moved to **Next.js + FastAPI** to grow into a platform; RSI(14) and MACD(12,26,9) added (`indicators.py`) and charted; not yet used by strategies. |
 
