@@ -18,9 +18,11 @@ filters:
       strategic_pct:         { min: 25 }
 
   # RSI / MACD on the signal day. Metric names: see src/dse_screener/technical.py (TECH_METRICS).
-  # Backtest 2026-10-01 (see docs/02-mvp-spec.md, "Technical filter results"): of ~20 RSI/MACD rules,
+  # Chosen on the DS30-only universe (docs/02-mvp-spec.md, "Technical filter results"): of ~20 RSI/MACD rules,
   # only "bullish MACD cross in the last 10 days" improved both the tuning period (2025) and the test (2026).
-  # 20-day hold vs quality basket: -0.6 -> +0.3 median, beat rate 43% -> 52%.
+  # Re-check on today's 71-stock universe ("Technical filter re-check"): it now hurts the tuning period
+  # (median -1.3 -> -1.6, profit factor 1.35 -> 1.09) and helps only 2026 (mean +1.7 -> +2.1, win 56% -> 59%).
+  # Kept because no alternative (off, 5/15/20-day windows, more exemptions) beat it in both periods. Unproven.
   technical:
     enabled: true
     params: { rsi_window: 14, macd_fast: 12, macd_slow: 26, macd_signal: 9 }

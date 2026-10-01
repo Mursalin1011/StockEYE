@@ -247,6 +247,32 @@ Median return vs basket, tuning period (2025) → test period (2026). Baseline s
 Swing with the cross ≤ 10 rule, 20-day hold: 91 trades, median **+0.3** vs basket (was −0.6), beat rate **52%** (was 43%).
 About 20 variants were tried, so some luck is likely in the winner. Re-check this as history grows.
 
+### Technical filter re-check on the 71-stock universe (2026-10-01)
+
+The rule above was chosen when the universe was DS30 only. Re-run on today's universe (all A-category equities with
+liquidity + quality rules, 71 pass swing) with the shortlist backtest, `second_breakout` exempt unless noted.
+20-day hold, entry next open, net of 1%. Tuning period (2024-09-30 … 2025-12-31) → test (2026):
+
+| Variant | Trades | Median % | Mean % | Win % | Mean vs basket | Profit factor |
+|---|---|---|---|---|---|---|
+| **Current: cross ≤ 10** | 117 → 133 | −1.6 → **+1.3** | +0.3 → **+2.1** | 41.9 → **58.6** | −0.1 → **+1.3** | 1.09 → **2.07** |
+| Filter off | 173 → 144 | **−1.3** → +1.0 | **+0.9** → +1.7 | **44.5** → 56.3 | −0.3 → +0.5 | **1.35** → 1.78 |
+| Cross ≤ 15 | 135 → 141 | −1.5 → +1.3 | +0.8 → +2.0 | 43.7 → 58.2 | −0.1 → +1.0 | 1.28 → 1.98 |
+| Cross ≤ 20 | 150 → 143 | −1.0 → +1.2 | +1.4 → +1.8 | 46.0 → 56.6 | −0.1 → +0.8 | 1.51 → 1.81 |
+| ≤ 10, base breakout also exempt | 155 → 148 | −1.0 → +1.1 | +1.6 → +1.6 | 45.2 → 55.4 | −0.1 → +0.7 | 1.57 → 1.73 |
+| ≤ 10, quiet accumulation also exempt | 158 → 141 | −0.9 → +1.3 | +0.4 → +2.1 | 44.9 → 58.2 | −0.4 → +1.0 | 1.13 → 2.05 |
+| Cross ≤ 5 | 89 → 107 | −2.7 → +2.3 | −0.6 → +1.7 | 37.1 → 59.8 | −1.0 → +0.6 | 0.83 → 1.80 |
+
+Also tried, none better than current in 2026: ≤ 5 / 15 / 20 with base breakout or quiet accumulation exempt.
+
+- **Kept, unchanged**: no variant beats the current rule in both periods.
+- **But it is no longer "better in both"**: in the tuning period the filter now *hurts* (worse median, mean, win rate
+  and profit factor than no filter); its support comes from 2026 alone. If it were proposed today it would fail
+  against "off". It stays only because the incumbent wins ties under the rule.
+- Bootstrap standard error of each median is 0.6–1.1 points, so most gaps above are noise.
+- 2026 has now been looked at several times and is no longer an untouched test. Re-check when more history exists;
+  "off" and "cross ≤ 15" are the alternatives to watch.
+
 ## 10. Open questions
 
 1. **Notifications**: create a Telegram bot via @BotFather (2 min) and choose which email account to send from (needed for M4).

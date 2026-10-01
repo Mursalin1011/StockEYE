@@ -129,3 +129,5 @@ Every signal, quality-passing stocks, entry next open, net of 1%:
   2026 unchanged. Picks from second breakout alone: 13 trades, median +7.3%, 85% winners.
 - Side finding, not acted on: on today's 71-stock universe the MACD filter's effect on base breakout and quiet
   accumulation **flips between years** (hurt in 2025, helped in 2026). It was validated on DS30; worth re-testing.
+  Re-tested with the shortlist backtest (docs/02-mvp-spec.md, "Technical filter re-check"): same flip; nothing
+  beat the current rule in both periods, so it is kept.
