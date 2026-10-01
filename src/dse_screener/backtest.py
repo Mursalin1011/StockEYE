@@ -79,7 +79,8 @@ def run_backtest(
         tech_ok = rules.passes(technical.technical_frame(g, tf_cfg.params), tf_cfg.rules) if use_tech else True
         for strat, cfg in strategies:
             out = strat.compute(g)
-            hit = out["signal"].astype(bool) & (out.index >= strat.min_history) & traded & tech_ok
+            ok = tech_ok if (not use_tech or tf_cfg.applies_to(strat.name)) else True
+            hit = out["signal"].astype(bool) & (out.index >= strat.min_history) & traded & ok
             for i in out.index[hit]:
                 signal_rows.append({
                     "date": g.at[i, "date"], "code": code, "strategy": strat.name, "title": strat.title,

@@ -83,7 +83,7 @@ What this says:
 | **W1** | **Case-study tool**: `python -m dse_screener casestudy PTL --from 2025-11-01`, plus a dashboard page. Any stock you spot → timeline of every signal on the chart, entries, outcomes | Lets you test stocks like PTL yourself in seconds | Reproduces this document's PTL table |
 | **W2** | **Backtest metrics**: mean, profit factor, avg win/loss, recall on big winners; exit modes (fixed / stop + trailing MA / time stop) | Median-only reporting hides positive-skew strategies | Summary shows both views; this doc's numbers reproduced |
 | **W3** | **All-equities universe** with fundamentals for every company (one-time ~25 min, then weekly) and instrument type from DSE (not name rules); dividend/bonus adjustment for all | PTL-type misses; quality matters most outside DS30 | Daily screen of ~300 quality-passing equities within the 3pm job |
-| **W4** | **Re-entry after a shakeout**: if a breakout fails (stop or close back in the base) but the stock **re-breaks the base high on ≥ 2× volume within 40 days**, signal again with a "second breakout" reason | PTL's real move started at the second breakout | Backtest: more winners captured per false alarm |
+| **W4** ✅ | **Re-entry after a shakeout**: if a breakout fails (stop or close back in the base) but the stock **re-breaks the base high on ≥ 2× volume within 40 days**, signal again with a "second breakout" reason | PTL's real move started at the second breakout | Backtest: more winners captured per false alarm |
 | **W5** | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
 | **W6** | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
 | **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
@@ -104,3 +104,28 @@ then W4–W6 (each measured with W2 on the wider universe), then W7 and W8.
 2. **Holdings tracker:** would you mark your buys in the dashboard, or by Telegram message (e.g. `/bought PTL 53.7`)?
 3. **Re-entry style:** alert on a second breakout automatically, or only for stocks you're watching?
 4. Any **other winners** you remember, to add to the case-study set (the more examples, the better the tuning)?
+
+## 6. Results
+
+### W4: re-entry after a shakeout (`second_breakout`), 2026-10-01
+A base breakout that closes back below the old base high (without closing more than 5% under the base low),
+then a close ≥ 1% above that breakout's highest close on ≥ 2× volume, within 40 trading days.
+PTL: first breakout 24 Feb, shakeout to 50.2, **second breakout 12 Apr at 59.0 (swing score 89)**.
+
+Every signal, quality-passing stocks, entry next open, net of 1%:
+
+| Profile, hold | Strategy | Signals | Median | Win % | Mean vs basket | Profit factor |
+|---|---|---|---|---|---|---|
+| swing, 20d | base breakout | 506 | −0.1 | 50 | +0.1 | 1.6 |
+| swing, 20d | **second breakout** | 60 | **+3.6** | **60** | **+2.0** | **2.4** |
+| position, 60d | base breakout | 184 | −1.3 | 45 | +1.2 | 1.5 |
+| position, 60d | second breakout | 20 | −1.2 | 45 | −0.1 | 1.0 |
+
+- Swing: better than first breakouts in both 2025 and 2026. **On**, weight 1.0.
+- Position: 2025 poor (n=7), 2026 good (n=13). **Off** until more history.
+- **The swing MACD filter works against it**: second breakouts with a MACD cross older than 10 days returned
+  +12.5% / +7.4% median (2025 / 2026, n=10 each) vs −3.4% / +0.6% for those passing. Hence `exempt: [second_breakout]`.
+- Shortlist backtest (swing, 20d): mean +1.0% → **+1.3%**, median 0.0% → +0.1%, 2025 mean −0.3% → +0.3%,
+  2026 unchanged. Picks from second breakout alone: 13 trades, median +7.3%, 85% winners.
+- Side finding, not acted on: on today's 71-stock universe the MACD filter's effect on base breakout and quiet
+  accumulation **flips between years** (hurt in 2025, helped in 2026). It was validated on DS30; worth re-testing.

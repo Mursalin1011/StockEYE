@@ -96,11 +96,12 @@ def evaluate_profile(
                     "metrics": {k: _plain(v) for k, v in row.items() if k not in ("signal", "score")},
                 })
         # Technical filter (RSI/MACD) on the signal day: drop this stock's signals if it fails
+        # (except those from strategies the filter is exempt for)
         if tf_cfg and tf_cfg.enabled and len(signals) > n_before:
             failures = [f"{k}: {why}" for k, rule in tf_cfg.rules.items() if (why := rule.check(tech.get(k))) is not None]
-            if failures:
+            if failures and any(tf_cfg.applies_to(s["strategy"]) for s in signals[n_before:]):
                 tech_excluded[code] = failures
-                del signals[n_before:]
+                signals[n_before:] = [s for s in signals[n_before:] if not tf_cfg.applies_to(s["strategy"])]
     sig = pd.DataFrame(signals, columns=SIGNAL_COLUMNS)
     picks = rank(sig, metrics, profile, _record_dates_near(actions, as_of, profile.ranking.record_date_window_days),
                  tech_notes)

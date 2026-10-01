@@ -123,6 +123,10 @@ class FilterConfig(BaseModel):
     enabled: bool = True
     rules: dict[str, Rule] = {}
     params: dict = {}            # e.g. technical filter: rsi_window, macd_fast/slow/signal
+    exempt: list[str] = []       # technical filter: strategies it doesn't apply to
+
+    def applies_to(self, strategy: str) -> bool:
+        return strategy not in self.exempt
 
 
 class StrategyConfig(BaseModel):

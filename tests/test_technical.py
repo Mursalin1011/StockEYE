@@ -51,10 +51,10 @@ def _stock(code, n=200, surge_at=150, trend=0.0, seed=0):
     })
 
 
-def _profile(rules):
+def _profile(rules, exempt=()):
     return Profile.model_validate({
         "name": "t",
-        "filters": {"technical": {"enabled": True, "rules": rules}},
+        "filters": {"technical": {"enabled": True, "rules": rules, "exempt": list(exempt)}},
         "strategies": {"quiet_accumulation": {"params": {"max_price_range_pct": 30, "min_divergence": 1,
                                                          "min_price_change_pct": -10, "max_price_change_pct": 10}}},
         "ranking": {"min_score": 0},
@@ -76,6 +76,16 @@ def test_impossible_rule_removes_all_picks(data):
     blocked = evaluate_profile(_profile({"rsi": {"max": -1}}), prices, metrics, day)
     assert blocked.picks.empty and set(blocked.technical_excluded) == set(base.picks["code"])
     assert run_backtest(_profile({"rsi": {"max": -1}}), prices, metrics).trades.empty
+
+
+def test_exempt_strategy_ignores_the_filter(data):
+    prices, metrics = data
+    day = prices["date"].iloc[160].date()
+    base = evaluate_profile(_profile({}), prices, metrics, day)
+    exempt = evaluate_profile(_profile({"rsi": {"max": -1}}, exempt=["quiet_accumulation"]), prices, metrics, day)
+    assert list(exempt.picks["code"]) == list(base.picks["code"]) and not exempt.technical_excluded
+    bt = run_backtest(_profile({"rsi": {"max": -1}}, exempt=["quiet_accumulation"]), prices, metrics)
+    assert len(bt.trades) == len(run_backtest(_profile({}), prices, metrics).trades) > 0
 
 
 def test_backtest_matches_live_with_filter(data):

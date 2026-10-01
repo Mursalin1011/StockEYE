@@ -49,6 +49,18 @@ strategies:
       max_base_range_pct: 15
       min_volume_x: 2.0
       max_days_since: 5
+  second_breakout:
+    # Off: 2-year check at 60d was mixed (20 signals; 2025 median -7.6% n=7, 2026 +3.3% n=13) and the
+    # shortlist backtest got slightly worse (mean +3.4% -> +2.7%). Revisit with more history.
+    enabled: false
+    weight: 1.0
+    params:
+      base_days: 60            # first breakout: keep equal to base_breakout above
+      max_base_range_pct: 15
+      min_volume_x: 2.0
+      window_days: 40
+      min_rebreak_volume_x: 2.0
+      max_days_since: 5
   big_hands:
     weight: 0.7
     # 2-year check: on its own, worse than a random day at 60 days (larger trades can be selling too).

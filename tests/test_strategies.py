@@ -6,6 +6,7 @@ from dse_screener.strategies import REGISTRY
 from dse_screener.strategies.base_breakout import BaseBreakout
 from dse_screener.strategies.big_hands import BigHands
 from dse_screener.strategies.quiet_accumulation import QuietAccumulation
+from dse_screener.strategies.second_breakout import SecondBreakout
 
 
 def make_df(close, volume, trades=None):
@@ -84,6 +85,41 @@ def test_breakout_fires_and_decays():
 def test_breakout_needs_volume():
     close = np.r_[flat(60), 105.0]
     assert not BaseBreakout().compute(make_df(close, np.full(61, 100_000))).iloc[-1]["signal"]
+
+
+# --- second breakout --------------------------------------------------------
+
+def shakeout(after_close=110.0, after_vol=1_000_000, shake=99.0, wait=10):
+    """Flat base ~100, breakout to 105 (peak 107), back into the base at `shake`, then a re-break."""
+    close = np.r_[flat(60), 105.0, 107.0, 104.0, shake, np.full(wait, 100.0), after_close]
+    vol = np.r_[np.full(60, 100_000), 400_000, 200_000, 150_000, 150_000, np.full(wait, 100_000), after_vol]
+    return make_df(close, vol)
+
+
+def test_second_breakout_fires_after_shakeout():
+    df = shakeout()
+    out = SecondBreakout().compute(df).iloc[-1]
+    assert out["signal"] and out["days_since"] == 0
+    assert out["failed_high"] == pytest.approx(107.0)
+    assert out["first_date"] == df["date"].iloc[60]
+    assert out["shake_low_pct"] < 0 and out["score"] > 50
+    assert "failed" in SecondBreakout().reasons(out)[0]
+
+
+def test_second_breakout_needs_the_first_to_fail():
+    close = np.r_[flat(60), 105.0, 107.0, np.full(10, 106.0), 112.0]     # never fell back into the base
+    vol = np.r_[np.full(60, 100_000), 400_000, np.full(11, 100_000), 1_000_000]
+    assert not SecondBreakout().compute(make_df(close, vol))["signal"].any()
+
+
+def test_second_breakout_needs_volume_and_a_new_high():
+    assert not SecondBreakout().compute(shakeout(after_vol=120_000)).iloc[-1]["signal"]
+    assert not SecondBreakout().compute(shakeout(after_close=106.0)).iloc[-1]["signal"]   # below the 107 peak
+
+
+def test_second_breakout_cancelled_if_base_breaks_or_too_late():
+    assert not SecondBreakout().compute(shakeout(shake=90.0)).iloc[-1]["signal"]   # >5% under the base low
+    assert not SecondBreakout().compute(shakeout(wait=45)).iloc[-1]["signal"]      # beyond 40 days
 
 
 # --- big hands --------------------------------------------------------------

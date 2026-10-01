@@ -62,6 +62,8 @@ Every trading day, for each profile (`swing`, `position`):
    - **Quiet accumulation** (your method): volume well above its own baseline, price nearly flat,
      volume growth much bigger than the price move.
    - **Base breakout**: the close breaks above a tight N-day range on high volume.
+   - **Second breakout** (swing): a breakout fell back into its base (shakeout), then the close clears
+     that breakout's high on high volume within 40 days. The MACD filter doesn't apply to it.
    - **Big hands** (confirmation only): average trade size rising, i.e. fewer, larger trades.
 3. **Ranking**: the best primary strategy score × its weight, +10 per extra strategy that agrees,
    + boosts (e.g. institutional holding rising), − a penalty near record dates (dividend-driven volume).

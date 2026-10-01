@@ -118,6 +118,7 @@ class Strategy(ABC):
 | S1 | **quiet_accumulation** (yours) | Price stable, volume rising, volume growth ≫ price growth | lookback windows, max price range %, min volume ratio, divergence ratio |
 | S2 | **base_breakout** | Close breaks above an N-day range on high volume | base length, max base range %, breakout volume multiple |
 | S3 | **big_hands** (trade-size surge) | Volume ÷ trades rising, i.e. fewer but larger trades | window, min trade-size growth |
+| S4 | **second_breakout** (re-entry after a shakeout) | A base breakout falls back into the base, then the close clears its high on volume | first-breakout params, window, re-break volume multiple, max undercut of the base low |
 | F1 | **quality_filter** | Gate: category, profitability, dividends, market cap | allowed categories, min EPS, min dividend years |
 | F2 | **red_flags** | Exclude/penalize: Z category, tiny float, spike with no news, abnormal turnover | thresholds |
 
@@ -201,6 +202,7 @@ signal count. Floor-price periods are excluded. Tuning uses early data, and resu
 | 2026-10-01 | `strategic_pct` lowered to **25** (keeps EBL); **insurers excluded** (`sector: not_in [Insurance]`). 26/30 DS30 pass. |
 | 2026-10-01 | Strategies compute every date at once with backward-only windows, so today's screen and the backtest share one code path. |
 | 2026-10-01 | **Big hands is `role: confirm`**. Alone over 2 years it was no better than a random day (swing) and worse (position, 35% positive at 60d), so it only adds confluence. |
+| 2026-10-01 | **Second breakout on in swing, off in position.** Swing (71 stocks, 20d): 60 signals, median +3.6% vs −0.1% for first breakouts, better in 2025 and 2026; shortlist mean +1.0% → +1.3%. Position at 60d was mixed (n=20). It is **exempt from the MACD filter** (`filters.technical.exempt`): second breakouts failing the 10-day-cross rule did far better in both years. |
 | 2026-10-01 | **Record-date penalty**: swing −20 (near-record signals did worse), position 0, note only (they did better, n=18). |
 | 2026-10-01 | Quiet accumulation allows at most a **−2%** price dip (was −5%); a bigger dip on high volume may be selling. |
 | 2026-10-01 | **Telegram only** for now; email later (the `notify/` package takes more channels). Summary shows swing first. |
