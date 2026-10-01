@@ -6,16 +6,21 @@ import { StrategyChip } from "./ui";
 function splitReasons(reasons: string[]) {
   const blocks: { head: string; lines: string[] }[] = [];
   const extras: string[] = [];
+  let tech: string | null = null;
   for (const r of reasons) {
+    if (r.startsWith("Tech: ")) {
+      tech = r.slice(6);
+      continue;
+    }
     const i = r.indexOf("): ");
     if (/^[+-]\d/.test(r) || r.startsWith("Note:") || i < 0) extras.push(r);
     else blocks.push({ head: r.slice(0, i + 1), lines: r.slice(i + 3).split("; ") });
   }
-  return { blocks, extras };
+  return { blocks, extras, tech };
 }
 
 export function PickCard({ pick, profile, strategies }: { pick: Pick; profile: string; strategies: Record<string, string> }) {
-  const { blocks, extras } = splitReasons(pick.reasons);
+  const { blocks, extras, tech } = splitReasons(pick.reasons);
   return (
     <article className="rounded-lg border border-line p-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -45,6 +50,7 @@ export function PickCard({ pick, profile, strategies }: { pick: Pick; profile: s
         ))}
       </div>
       {extras.length > 0 && <div className="mt-3 text-sm text-ink-2">{extras.join(" · ")}</div>}
+      {tech && <div className="mt-1 text-sm text-ink-2">📈 {tech}</div>}
       {pick.news.length > 0 && (
         <ul className="mt-3 space-y-0.5 border-t border-line pt-2 text-sm text-ink-2">
           {pick.news.map((n) => (

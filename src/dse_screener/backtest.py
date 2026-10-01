@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from . import rules
+from . import rules, technical
 from .config import Profile
 from .engine import SIGNAL_COLUMNS, _record_dates_near, build_strategies, rank
 
@@ -61,6 +61,8 @@ def run_backtest(
     q = rules.evaluate(metrics, qf.rules if qf and qf.enabled else {})
     passed = q.index[q["passed"]].tolist()
     strategies = build_strategies(profile)
+    tf_cfg = profile.filters.get("technical")
+    use_tech = bool(tf_cfg and tf_cfg.enabled and tf_cfg.rules)
 
     signal_rows, fwd_rows = [], []
     for code in passed:
@@ -71,9 +73,11 @@ def run_backtest(
         fwd = forward_returns(g, horizons, bt.cost_pct)
         fwd["date"], fwd["code"], fwd["traded"] = g["date"], code, traded
         fwd_rows.append(fwd)
+        # Technical filter (RSI/MACD) evaluated on each signal's own day, as the live screen does
+        tech_ok = rules.passes(technical.technical_frame(g, tf_cfg.params), tf_cfg.rules) if use_tech else True
         for strat, cfg in strategies:
             out = strat.compute(g)
-            hit = out["signal"].astype(bool) & (out.index >= strat.min_history) & traded
+            hit = out["signal"].astype(bool) & (out.index >= strat.min_history) & traded & tech_ok
             for i in out.index[hit]:
                 signal_rows.append({
                     "date": g.at[i, "date"], "code": code, "strategy": strat.name, "title": strat.title,

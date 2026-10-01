@@ -112,6 +112,7 @@ class Universe(BaseModel):
 class FilterConfig(BaseModel):
     enabled: bool = True
     rules: dict[str, Rule] = {}
+    params: dict = {}            # e.g. technical filter: rsi_window, macd_fast/slow/signal
 
 
 class StrategyConfig(BaseModel):

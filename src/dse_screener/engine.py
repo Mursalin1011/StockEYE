@@ -7,7 +7,7 @@ from datetime import date
 
 import pandas as pd
 
-from . import quality, rules
+from . import quality, rules, technical
 from .adjust import apply_adjustments
 from .config import Profile, Settings, StrategyConfig, load_universe
 from .db import Database
@@ -25,6 +25,7 @@ class ScreenResult:
     signals: pd.DataFrame               # every strategy hit: code, strategy, score, weighted, reasons, metrics
     excluded: pd.DataFrame              # quality failures: code, failures
     skipped: list[str] = field(default_factory=list)  # no trading on as_of / not enough history
+    technical_excluded: dict[str, list[str]] = field(default_factory=dict)  # had signals, failed RSI/MACD rules
 
 
 def build_strategies(profile: Profile) -> list[tuple[Strategy, StrategyConfig]]:
@@ -64,13 +65,17 @@ def evaluate_profile(
     excluded = q.loc[~q["passed"], ["failures"]].reset_index()
 
     strategies = build_strategies(profile)
+    tf_cfg = profile.filters.get("technical")
     as_of_ts = pd.Timestamp(as_of)
-    signals, skipped = [], []
+    signals, skipped, tech_notes, tech_excluded = [], [], {}, {}
     for code in passed:
         g = prices[(prices["code"] == code) & (prices["date"] <= as_of_ts)].reset_index(drop=True)
         if g.empty or g["date"].iloc[-1] != as_of_ts or not g["volume"].iloc[-1]:
             skipped.append(code)
             continue
+        tech = technical.technical_frame(g, tf_cfg.params if tf_cfg else None).iloc[-1]
+        tech_notes[code] = technical.describe(tech)
+        n_before = len(signals)
         for strat, cfg in strategies:
             if len(g) < strat.min_history:
                 continue
@@ -86,9 +91,16 @@ def evaluate_profile(
                     "reasons": strat.reasons(row),
                     "metrics": {k: _plain(v) for k, v in row.items() if k not in ("signal", "score")},
                 })
+        # Technical filter (RSI/MACD) on the signal day: drop this stock's signals if it fails
+        if tf_cfg and tf_cfg.enabled and len(signals) > n_before:
+            failures = [f"{k}: {why}" for k, rule in tf_cfg.rules.items() if (why := rule.check(tech.get(k))) is not None]
+            if failures:
+                tech_excluded[code] = failures
+                del signals[n_before:]
     sig = pd.DataFrame(signals, columns=SIGNAL_COLUMNS)
-    picks = rank(sig, metrics, profile, _record_dates_near(actions, as_of, profile.ranking.record_date_window_days))
-    return ScreenResult(profile.name, as_of, len(metrics), picks, sig, excluded, skipped)
+    picks = rank(sig, metrics, profile, _record_dates_near(actions, as_of, profile.ranking.record_date_window_days),
+                 tech_notes)
+    return ScreenResult(profile.name, as_of, len(metrics), picks, sig, excluded, skipped, tech_excluded)
 
 
 def _record_dates_near(actions: pd.DataFrame | None, as_of: date, days: int) -> dict[str, date]:
@@ -100,7 +112,11 @@ def _record_dates_near(actions: pd.DataFrame | None, as_of: date, days: int) -> 
 
 
 def rank(
-    signals: pd.DataFrame, metrics: pd.DataFrame, profile: Profile, record_dates: dict[str, date] | None = None
+    signals: pd.DataFrame,
+    metrics: pd.DataFrame,
+    profile: Profile,
+    record_dates: dict[str, date] | None = None,
+    tech_notes: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     r = profile.ranking
     rows = []
@@ -127,6 +143,8 @@ def rank(
             score -= r.record_date_penalty
             prefix = f"-{r.record_date_penalty:.0f}" if r.record_date_penalty else "Note:"
             reasons.append(f"{prefix} record date {record_dates[code]:%d %b}: volume may be dividend-driven")
+        if tech_notes and tech_notes.get(code):
+            reasons.append(f"Tech: {tech_notes[code]}")
         rows.append({"code": code, "final_score": round(score, 1), "strategies": g["strategy"].tolist(),
                      "reasons": reasons})
     picks = pd.DataFrame(rows, columns=["code", "final_score", "strategies", "reasons"])

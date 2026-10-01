@@ -49,8 +49,11 @@ def _e(s) -> str:
 
 def _pick_lines(pick, news: list[str], cfg: ReportConfig, rank: int) -> list[str]:
     lines = [f"<b>{rank}. {_e(pick.code)}</b> · score {pick.final_score:.0f}"]
-    extras = []
+    extras, tech = [], None
     for reason in pick.reasons:
+        if reason.startswith("Tech: "):
+            tech = reason.removeprefix("Tech: ")
+            continue
         if reason[:1] in "+-" or reason.startswith("Note:"):
             extras.append(reason)
             continue
@@ -60,6 +63,8 @@ def _pick_lines(pick, news: list[str], cfg: ReportConfig, rank: int) -> list[str
             lines.append(f"   {_e(part)}")
     if extras:
         lines.append("➕ " + _e(" · ".join(extras)))
+    if tech:
+        lines.append("📈 " + _e(tech))
     for n in news:
         lines.append(f"📰 {_e(n)}")
     return lines

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,6 +37,23 @@ class Rule(BaseModel):
 
 def _fmt(v) -> str:
     return f"{v:,.2f}".rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+
+def passes(frame: pd.DataFrame, rules: dict[str, Rule]) -> pd.Series:
+    """Vectorized: True where a row passes every rule (missing values fail). Same logic as Rule.check."""
+    ok = pd.Series(True, index=frame.index)
+    for name, rule in rules.items():
+        col = frame[name] if name in frame else pd.Series(np.nan, index=frame.index)
+        ok &= col.notna()
+        if rule.in_ is not None:
+            ok &= col.astype(str).isin(rule.in_)
+        if rule.not_in is not None:
+            ok &= ~col.astype(str).isin(rule.not_in)
+        if rule.min is not None:
+            ok &= col >= rule.min
+        if rule.max is not None:
+            ok &= col <= rule.max
+    return ok.fillna(False).astype(bool)
 
 
 def evaluate(metrics: pd.DataFrame, rules: dict[str, Rule]) -> pd.DataFrame:
