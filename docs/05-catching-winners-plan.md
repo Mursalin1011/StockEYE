@@ -1,0 +1,106 @@
+# Catching moves like PTL: case study, market-wide evidence, upgrade plan
+
+_Status: Draft v0.1 · 2026-10-01_
+
+## 1. PTL (Paramount Textile), Nov 2025 → Oct 2026
+
+Low 41.3 (13 Nov 2025) → high 85.7 (30 Sep 2026): **+107%**. From the Dec–Feb base (~50): **+60%**.
+
+| Phase | Data |
+|---|---|
+| Dec → mid Feb: base | Price 49–51, 30-day range ~6%, **volume below normal** (0.7–0.9× its prior average) |
+| 24–26 Feb: first breakout (your circle) | **4.6× volume**, RSI 76 |
+| March: shakeout | Pulled back to 50.9 (−5% from the breakout), volume back to normal |
+| 12–23 Apr: second breakout | **8× volume**, then a 6-month trend to 85.7 |
+
+PTL is Category A, with 13 years of unbroken dividends, EPS +11.5% a year, 61% sponsor holding and
+**institutions +2.4 pts**. It **passes the quality filter** in both profiles.
+
+### What each strategy did (entry = next day's open; "now" = 81.9 on 1 Oct 2026)
+
+| Signal | First fired | Entry | To now | Notes |
+|---|---|---|---|---|
+| **StockEYE swing: base breakout** | **25 Feb** | 53.7 | **+52.5%** | **Shortlist #1, score 82** (if PTL had been in the universe) |
+| StockEYE position: base breakout | 25 Feb, again **12 Apr** | 55.9 / 59.4 | +46.5% / +37.9% | Shortlisted both times (66, 70) |
+| StockEYE swing: quiet accumulation | 1 Apr | 55.0 | +48.9% | Missed Feb: the breakout widened the 30-day range to 13.4% (limit 12%) |
+| StockEYE position: quiet accumulation | never | | | |
+| Pine Trend Template "Buy" | 12 Apr | 59.4 | +37.9% | Then flickered on and off 13 times |
+| Pine enhanced VCP | 18 Jan | 50.6 | +61.9% | Early, but the detector is biased (doc 04) |
+| Pocket pivot (MA10/50) | 19 Jan | 52.4 | +56.3% | Earliest, but fired 16 times |
+| MA cross 20 > 50 | 15 Dec, 25 Feb | 52.4 / 55.9 | +56% / +47% | |
+
+Lessons from PTL:
+1. **It was never scanned.** StockEYE only screens DS30. This is the main miss.
+2. **The base breakout logic worked**: it flagged your exact circled breakout as the #1 pick.
+3. **An RSI ≤ 70 filter would have blocked it** (RSI 76 at the breakout), consistent with the backtest that rejected it.
+4. **The first breakout was a shakeout.** A −8% stop exits within 3–6 days at −6% to −9%. The real move
+   started at the **second** breakout, so **re-entry** matters more than exits.
+5. PTL was a **quiet base with volume drying up, then breakout volume** (VCP-like), not "volume rising
+   while price is flat". Your method and the VCP sequence are related but different stages.
+
+## 2. Market-wide evidence (all 374 equities, Oct 2024 → Oct 2026)
+
+Price and volume only (fundamentals exist only for DS30 + PTL so far); liquid days only (60-day average value ≥ BDT 3 mn).
+Prices outside DS30/PTL aren't yet adjusted for dividends and bonus shares, which adds some noise.
+
+### Recall: how many big moves were caught (840 moves of ≥ +50% within 120 days, in 201 stocks)
+| Strategy | Caught early* | Signals per catch |
+|---|---|---|
+| swing: base breakout | **29.5%** (median 20 days after the move starts) | 2.2 |
+| swing: quiet accumulation | 15.8% | 2.2 |
+| position: base breakout | 10.5% | 2.6 |
+| position: quiet accumulation | 3.3% | 4.1 |
+| **any strategy** | **36%** | |
+
+\* Signal within 20 days before to 60 days after the move started, with entry ≤ 1.2× the starting price.
+
+The biggest misses (DAFODILCOM +306%, DOMINAGE +237%, KPPL, SHARPIND, BDTHAIFOOD…) are mostly
+speculative names that the quality filter is *meant* to avoid.
+
+### Precision: same entries, different exits (per trade, net of 1%; basket = same dates)
+| Strategy (all equities) | Exit | Win % | Avg win / loss | Median | **Mean vs basket** | Profit factor |
+|---|---|---|---|---|---|---|
+| position: base breakout | fixed 20 days | 48 | +11.4 / −7.1 | −0.6 | **+0.8** | 1.5 |
+| position: base breakout | −8% stop + below MA20 | 36 | +14.0 / −5.6 | −2.8 | +0.9 | 1.4 |
+| swing: base breakout | fixed 20 days | 44 | +9.9 / −7.8 | −1.3 | −0.2 | 1.0 |
+| swing: quiet accumulation | fixed 20 days | 49 | +9.0 / −6.4 | −0.2 | +0.5 | 1.4 |
+| swing: quiet accumulation | −8% stop + below MA50 | 31 | +13.9 / −4.3 | −2.3 | +0.9 | 1.4 |
+
+On **DS30 quality stocks**, swing base breakout with a fixed 20-day hold had a **mean of +1.3 vs the basket**, 50% beat rate, PF 1.9 (72 trades).
+
+What this says:
+- Signals catch a fair share of big moves; **averages are slightly positive, medians negative**. The
+  returns come from a minority of big winners. StockEYE's backtest headline (median) understates this.
+- **Trailing exits didn't help on their own.** DSE breakouts often shake out (like PTL in March), so tight
+  trailing exits cut the eventual winners too.
+- **Without the quality filter**, swing breakouts are no better than the basket. The quality filter
+  appears to be what makes them work, which is why the universe has to grow *with* fundamentals.
+
+## 3. Upgrade plan
+
+| # | Upgrade | Why (evidence) | How we'll know it works |
+|---|---|---|---|
+| **W1** | **Case-study tool**: `python -m dse_screener casestudy PTL --from 2025-11-01`, plus a dashboard page. Any stock you spot → timeline of every signal on the chart, entries, outcomes | Lets you test stocks like PTL yourself in seconds | Reproduces this document's PTL table |
+| **W2** | **Backtest metrics**: mean, profit factor, avg win/loss, recall on big winners; exit modes (fixed / stop + trailing MA / time stop) | Median-only reporting hides positive-skew strategies | Summary shows both views; this doc's numbers reproduced |
+| **W3** | **All-equities universe** with fundamentals for every company (one-time ~25 min, then weekly) and instrument type from DSE (not name rules); dividend/bonus adjustment for all | PTL-type misses; quality matters most outside DS30 | Daily screen of ~300 quality-passing equities within the 3pm job |
+| **W4** | **Re-entry after a shakeout**: if a breakout fails (stop or close back in the base) but the stock **re-breaks the base high on ≥ 2× volume within 40 days**, signal again with a "second breakout" reason | PTL's real move started at the second breakout | Backtest: more winners captured per false alarm |
+| **W5** | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
+| **W6** | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
+| **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
+| **W8** | **Holdings tracker**: mark "bought PTL @ 53.7" (dashboard or Telegram), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
+
+**Order:** W1 + W2 first (cheap, and they make everything else measurable), then W3 (the biggest lever),
+then W4–W6 (each measured with W2 on the wider universe), then W7 and W8.
+
+## 4. Acceptance criteria (on the all-equities, quality-passing universe)
+
+- **Recall on quality big winners** ≥ 40%, with ≤ 3 signals per catch.
+- **Mean excess vs basket > 0** and **profit factor ≥ 1.5** in both the tuning (2025) and test (2026) periods.
+- No change goes live without beating the current version on these numbers.
+
+## 5. Decisions needed from you
+
+1. **Expand to all liquid DSE equities** (with the quality filter) for daily screening? It adds ~25 min once, then a few minutes weekly.
+2. **Holdings tracker:** would you mark your buys in the dashboard, or by Telegram message (e.g. `/bought PTL 53.7`)?
+3. **Re-entry style:** alert on a second breakout automatically, or only for stocks you're watching?
+4. Any **other winners** you remember, to add to the case-study set (the more examples, the better the tuning)?
