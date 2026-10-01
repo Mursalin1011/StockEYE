@@ -183,8 +183,8 @@ signal count. Floor-price periods are excluded. Tuning uses early data, and resu
 | M2 ✅ | Fundamentals + corporate actions | Company page + news adapters, adjustment factors (§4.3), config-driven quality filter in both profiles | Done 2026-10-01: 30/30 profiles, 1,624 news items, 59 corporate actions verified against ex-date opens; 25/30 DS30 pass quality in both profiles |
 | M3 ✅ | Strategy engine | Plugin interface, 3 strategies, quality filter, ranking (confluence, boosts, record-date penalty), reasons, runs saved to DB | Done 2026-10-01: `screen` gives a ranked, explained list for any date; no-lookahead verified by test |
 | M4 🔄 | Delivery | `daily` job (wait → retry → refresh news → screen → send), Telegram with recent news per pick, Task Scheduler script. Email deferred. | Built 2026-10-01; done when the summary arrives by 15:15 on 5 trading days in a row |
-| M5 ✅ | Dashboard | Streamlit (`dashboard` command, localhost only): Picks (saved runs, reasons, news, chart), Stock explorer (any stock: chart with every historical signal, fundamentals, shareholding, dividends, news), History, Quality, Settings (read-only) | Built 2026-10-01. "≤ 15 min review" to be confirmed by you |
-| M6 | Backtest-lite + tuning | Per-strategy stats; tuning session together | Defaults replaced by tested numbers |
+| M5 ✅ | Dashboard | **Next.js 16** (`web/`) over a FastAPI JSON API (`api` command), both localhost-only: Picks, Stocks, Stock page (candles + signal markers + ex-dates, volume, RSI, MACD), History, Quality, Backtest, Settings. Replaced the first Streamlit version. | Built 2026-10-01. "≤ 15 min review" to be confirmed by you |
+| M6 🔄 | Backtest + tuning | `backtest` / `tune` commands and Backtest page: next-day entry, 1% costs, quality-basket benchmark, non-overlapping trades, in/out-of-sample split; verified identical to the live screen on 6 real dates | Built 2026-10-01; tuning shows no robust edge yet (see below) |
 
 ## 9. Decisions log
 
@@ -217,8 +217,13 @@ Median forward return after a signal vs any day. Caveats: small samples, one mar
 | position (60d) | quiet accumulation | 51 | +0.4% | 53% | +2.3% / 60% |
 | position (60d) | base breakout | 69 | −0.7% | 42% | |
 
-**Swing looks promising; position doesn't yet beat simply holding DS30 stocks.** M6 tunes position (longer windows,
-more weight on fundamentals) before relying on it.
+**Superseded by the M6 backtest (realistic: next-day entry, 1% costs, same-day quality basket as benchmark):**
+swing picks returned a median +0.7% over 20 days vs +1.4% for the basket, beating it in 43% of 140 trades. A grid of
+24 quiet-accumulation settings found nothing that beats the basket on the tuning period *and* holds on 2026. The
+pattern alone shows no edge in DS30 over these two years. Next ideas to test: market-relative volume (built, off by
+default), RSI/MACD filters, and a wider universe than DS30 (where volume anomalies may matter more).
+
+| 2026-10-01 | Dashboard moved to **Next.js + FastAPI** to grow into a platform; RSI(14) and MACD(12,26,9) added (`indicators.py`) and charted; not yet used by strategies. |
 
 ## 10. Open questions
 

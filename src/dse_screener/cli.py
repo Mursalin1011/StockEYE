@@ -79,8 +79,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-trades", type=int, default=15, help="ignore combinations with fewer in-sample trades")
     p.add_argument("--top", type=int, default=15)
 
-    p = sub.add_parser("dashboard", help="open the dashboard in your browser (Streamlit)")
-    p.add_argument("--port", type=int, default=8501)
+    p = sub.add_parser("api", help="start the API for the web dashboard (127.0.0.1 only)")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--reload", action="store_true", help="restart on code changes (development)")
 
     sub.add_parser("telegram-setup", help="find your chat id after you've messaged the bot, and save it")
     sub.add_parser("telegram-test", help="send a test message")
@@ -362,14 +363,13 @@ def cmd_tune(args, settings, db) -> int:
     return 0
 
 
-def cmd_dashboard(args, settings, db) -> int:
-    import subprocess
+def cmd_api(args, settings, db) -> int:
+    import uvicorn
 
-    app = Path(__file__).parent / "dashboard" / "app.py"
     db.close()
-    # Bound to this PC only: the dashboard can trigger screens and shows your data
-    return subprocess.call([sys.executable, "-m", "streamlit", "run", str(app), "--server.port", str(args.port),
-                            "--server.address", "127.0.0.1", "--browser.gatherUsageStats", "false"])
+    # Bound to this PC only: the API can trigger screens and serves your data
+    uvicorn.run("dse_screener.api.app:app", host="127.0.0.1", port=args.port, reload=args.reload)
+    return 0
 
 
 def cmd_telegram_setup(args, settings, db) -> int:
@@ -436,7 +436,7 @@ COMMANDS = {
     "screen": cmd_screen,
     "daily": cmd_daily,
     "report": cmd_report,
-    "dashboard": cmd_dashboard,
+    "api": cmd_api,
     "backtest": cmd_backtest,
     "tune": cmd_tune,
     "telegram-setup": cmd_telegram_setup,
