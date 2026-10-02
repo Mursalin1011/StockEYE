@@ -33,6 +33,8 @@ filters:
 strategies:
   quiet_accumulation:
     weight: 1.0
+    # Optional (W6, docs/05), off: range_exclude_days, max_days_since. 2-year test: both made this worse
+    # (shortlist vs basket +2.3/+1.7 -> at best +2.2/+1.3). As is: PF 2.9 / 2.7 per signal in 2025 / 2026.
     params:
       price_window_days: 90
       max_price_range_pct: 18

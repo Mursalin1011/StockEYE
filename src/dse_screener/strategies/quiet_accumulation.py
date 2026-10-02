@@ -23,6 +23,14 @@ class Params(StrategyParams):
     # Divide the stock's volume ratio by the whole market's (traded value), so a market-wide
     # surge doesn't look like accumulation in every stock at once
     market_relative: bool = False
+    # Optional (W6). Judge stability on the base before the last `range_exclude_days` days, so a breakout
+    # at the end of an accumulation doesn't cancel it (PTL, Feb 2026: the breakout widened the 30-day
+    # range to 13.4%). The run-up itself is still capped by max_price_change_pct. 0 = off.
+    range_exclude_days: int = 0
+    # Optional (W6). Keep the signal on this many days after it last fired (score -recency_penalty per
+    # day), so "accumulation, then breakout" counts as two strategies agreeing. 0 = off.
+    max_days_since: int = 0
+    recency_penalty: float = 5.0
     # Score is 0 at the minimum thresholds above and full at these "strong" levels
     strong_volume_ratio: float = 3.0
     strong_divergence: float = 10.0
@@ -36,7 +44,7 @@ class QuietAccumulation(Strategy):
 
     @property
     def min_history(self) -> int:
-        return max(self.p.price_window_days, self.p.vol_short_days + self.p.vol_baseline_days)
+        return max(self.p.price_window_days + self.p.range_exclude_days, self.p.vol_short_days + self.p.vol_baseline_days)
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         p = self.p
@@ -52,8 +60,9 @@ class QuietAccumulation(Strategy):
             out["market_ratio"] = np.nan
             out["volume_ratio"] = out["raw_volume_ratio"]
         out["price_change_pct"] = (window_ratio(close, s, b) - 1) * 100
-        w = p.price_window_days
-        out["range_pct"] = (close.rolling(w).max() / close.rolling(w).min() - 1) * 100
+        w, x = p.price_window_days, p.range_exclude_days
+        base = close.shift(x) if x else close
+        out["range_pct"] = (base.rolling(w).max() / base.rolling(w).min() - 1) * 100
         vol_growth_pct = (out["volume_ratio"] - 1) * 100
         out["divergence"] = vol_growth_pct / out["price_change_pct"].abs().clip(lower=p.price_change_floor_pct)
         out["avg_value_mn"] = df["value_mn"].rolling(s).mean()
@@ -73,6 +82,21 @@ class QuietAccumulation(Strategy):
             + 20 * (1 - scale(out["range_pct"], p.tight_range_pct, p.max_price_range_pct))
             + 10 * out["obv_rising"].astype(float)
         ).where(out["signal"], 0.0)
+        out["days_since"] = np.where(out["signal"], 0.0, np.nan)
+        if p.max_days_since > 0:
+            # Carry the last signal day forward: its metrics, score minus a recency penalty
+            fresh = out["signal"].copy()
+            group = fresh.cumsum()                                   # +1 on every signal day
+            age = fresh.groupby(group).cumcount().astype(float).where(group > 0)   # days since the last signal day
+            carried = ~fresh & (age <= p.max_days_since)
+            filled = out.where(fresh).ffill()
+            for col in ["raw_volume_ratio", "market_ratio", "volume_ratio", "price_change_pct", "range_pct",
+                        "divergence", "avg_value_mn", "obv_rising"]:
+                vals = filled.loc[carried, col]
+                out.loc[carried, col] = vals.astype(bool) if out[col].dtype == bool else vals.astype(float)
+            out.loc[carried, "signal"] = True
+            out.loc[carried, "days_since"] = age[carried]
+            out.loc[carried, "score"] = (filled.loc[carried, "score"] - p.recency_penalty * age[carried]).clip(lower=0)
         return out
 
     def reasons(self, row: pd.Series) -> list[str]:
@@ -84,12 +108,15 @@ class QuietAccumulation(Strategy):
         else:
             vol_line = (f"Volume {row.volume_ratio:.1f}x its prior {p.vol_baseline_days}-day average "
                         f"(last {p.vol_short_days} days)")
+        window = (f"{p.price_window_days} days" if not p.range_exclude_days
+                  else f"the {p.price_window_days} days before the last {p.range_exclude_days}")
         r = [
             vol_line,
-            f"Price {row.price_change_pct:+.1f}% over the same period, "
-            f"{row.range_pct:.0f}% range over {p.price_window_days} days",
+            f"Price {row.price_change_pct:+.1f}% over the same period, {row.range_pct:.0f}% range over {window}",
             f"Volume grew {row.divergence:.0f}x more than price",
         ]
         if row.obv_rising:
             r.append("On-balance volume rising (more volume on up days)")
+        if pd.notna(row.get("days_since")) and row.days_since > 0:
+            r.append(f"Signal last fired {int(row.days_since)} day(s) ago (figures as of then)")
         return r

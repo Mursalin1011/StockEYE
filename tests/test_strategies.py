@@ -59,6 +59,45 @@ def test_market_relative_ignores_market_wide_surges():
     assert QuietAccumulation({"market_relative": True}).compute(df).iloc[-1]["signal"]
 
 
+def _accumulation_then_breakout():
+    """Flat ~100 with volume tripling (accumulation), then a 3-day push to 108 at the end."""
+    close = np.r_[flat(145), 103.0, 105.0, 106.0, 107.0, 108.0]
+    vol = np.r_[np.full(130, 100_000), np.full(20, 300_000)]
+    return make_df(close, vol)
+
+
+def test_range_exclude_keeps_accumulation_through_a_late_breakout():
+    params = {"max_price_range_pct": 6, "max_price_change_pct": 6}
+    df = _accumulation_then_breakout()
+    assert not QuietAccumulation(params).compute(df).iloc[-1]["signal"]          # range 8% > 6%
+    row = QuietAccumulation({**params, "range_exclude_days": 5}).compute(df).iloc[-1]
+    assert row["signal"] and row["range_pct"] < 2                                # judged on the base before
+    assert "before the last 5" in QuietAccumulation({**params, "range_exclude_days": 5}).reasons(row)[1]
+
+
+def test_max_days_since_carries_the_signal_with_a_decaying_score():
+    vol = np.r_[np.full(130, 100_000), np.full(20, 300_000), np.full(30, 20_000)]
+    close = np.r_[flat(150), np.full(30, 100.0)]
+    df = make_df(close, vol)
+    off = QuietAccumulation({"vol_short_days": 20}).compute(df)
+    on = QuietAccumulation({"vol_short_days": 20, "max_days_since": 3}).compute(df)
+    last = off.index[off["signal"]][-1]
+    assert not off.loc[last + 1, "signal"]
+    for k in (1, 2, 3):
+        assert on.loc[last + k, "signal"] and on.loc[last + k, "days_since"] == k
+        assert on.loc[last + k, "score"] == pytest.approx(off.loc[last, "score"] - 5 * k)
+    assert not on.loc[last + 4, "signal"]
+    assert (on.loc[off["signal"], "score"] == off.loc[off["signal"], "score"]).all()   # fresh days unchanged
+
+
+def test_w6_options_have_no_lookahead():
+    vol = np.r_[np.full(130, 100_000), np.full(20, 300_000)]
+    base = make_df(flat(150), vol)
+    longer = make_df(np.r_[flat(150), np.full(30, 150.0)], np.r_[vol, np.full(30, 900_000)])
+    s = QuietAccumulation({"range_exclude_days": 5, "max_days_since": 5})
+    pd.testing.assert_frame_equal(s.compute(base), s.compute(longer).iloc[:150], check_dtype=False)
+
+
 def test_no_lookahead():
     """Values on a date must not change when later data is appended."""
     vol = np.r_[np.full(130, 100_000), np.full(20, 300_000)]

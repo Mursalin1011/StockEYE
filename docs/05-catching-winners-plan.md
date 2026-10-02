@@ -85,7 +85,7 @@ What this says:
 | **W3** | **All-equities universe** with fundamentals for every company (one-time ~25 min, then weekly) and instrument type from DSE (not name rules); dividend/bonus adjustment for all | PTL-type misses; quality matters most outside DS30 | Daily screen of ~300 quality-passing equities within the 3pm job |
 | **W4** ✅ | **Re-entry after a shakeout**: if a breakout fails (stop or close back in the base) but the stock **re-breaks the base high on ≥ 2× volume within 40 days**, signal again with a "second breakout" reason | PTL's real move started at the second breakout | Backtest: more winners captured per false alarm |
 | **W5** ✅ (tested, not adopted) | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
-| **W6** | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
+| **W6** ✅ (tested, not adopted) | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
 | **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
 | **W8** | **Holdings tracker**: mark "bought PTL @ 53.7" (dashboard or Telegram), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
 
@@ -143,6 +143,37 @@ Against the acceptance criteria (section 4):
 - **Exits:** stop + MA20 smooths swing's 2025 (PF 1.1 → 1.4) at no cost overall, but doesn't change the verdict.
   Slower trailing exits (MA50 / MA100) are worse for both profiles: DSE run-ups pull back hard. Fixed holds stay the default.
 - 2026 has few complete big moves yet (6), so its recall is not meaningful.
+
+### W6: quiet accumulation v2, 2026-10-02 (tested, not adopted)
+New `quiet_accumulation` options, off by default: `range_exclude_days` (judge the price range on the base
+before the last N days, so a late breakout doesn't cancel the signal) and `max_days_since` (keep the signal
+on N days with a decaying score, so "accumulation, then breakout" earns the confluence bonus).
+
+PTL: with the last 3–5 days excluded, quiet accumulation fires on **25 Feb 2026, the same day as the base
+breakout** (missed before: range 13.4% > 12%). But the volume rise it sees that day is mostly the breakout's
+own volume, so it partly re-labels the breakout rather than finding accumulation earlier.
+
+| Profile, variant | Every signal: n | PF 2025 / 2026 | vs bkt 2025 / 2026 | QA recall | Shortlist vs bkt 2025 / 2026 | Shortlist PF 2025 / 2026 |
+|---|---|---|---|---|---|---|
+| **swing, current** | 202 | 0.6 / 2.3 | −1.3 / +1.1 | 29% | **−0.1 / +1.3** | 1.1 / 2.1 |
+| swing, exclude last 3 days | 217 | 0.5 / 2.8 | −1.6 / +1.7 | 31% | −0.2 / +1.2 | 1.1 / 2.1 |
+| swing, exclude last 5 days | 213 | 0.5 / 2.8 | −1.6 / +1.7 | 31% | −0.3 / +1.3 | 1.0 / 2.1 |
+| swing, carry 5 days | 213 | 0.5 / 2.3 | −1.3 / +1.2 | 29% | −0.4 / +1.2 | 1.0 / 2.0 |
+| swing, carry 10 days | 237 | 0.6 / 2.4 | −1.1 / +1.1 | 29% | −0.3 / +1.2 | 1.0 / 2.1 |
+| **position, current** | 82 | 2.9 / 2.7 | +1.0 / +1.4 | 9% | **+2.3 / +1.7** | 2.3 / 1.7 |
+| position, exclude last 5 days | 97 | 2.3 / 1.9 | +0.5 / +0.9 | 9% | +2.2 / +1.3 | 2.2 / 1.5 |
+| position, exclude last 10 days | 98 | 2.5 / 1.7 | +0.1 / +0.7 | 9% | +0.7 / +1.3 | 1.7 / 1.6 |
+| position, carry 10 days | 77 | 2.9 / 2.6 | +0.9 / +1.3 | 9% | +0.9 / +1.8 | 1.9 / 1.8 |
+
+What it says:
+- **Excluding the last days adds a handful of signals (one more big move caught for swing) and helps 2026,
+  but hurts 2025**; on the shortlist it changes almost nothing, because the extra signals coincide with
+  breakouts that were already picked. For position it is worse in both years.
+- **Carrying the signal forward adds nothing**: the confluence bonus rarely changes which stocks make the cut.
+- **Bigger finding: quiet accumulation on the swing horizon only worked in 2026** (2025: PF 0.6, −1.3 vs the
+  basket; 2026: PF 2.3, +1.1). On the **position horizon it worked in both years** (PF 2.9 / 2.7, beats the
+  basket by +1.0 / +1.4): the method needs months, not weeks, to pay off.
+- **Decision: no change.** Options stay available for `backtest --set` experiments.
 
 ### W5: base breakout v2, 2026-10-02 (tested, not adopted)
 New `base_breakout` options, all off by default (signals unchanged; a regression test checks this):

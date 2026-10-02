@@ -37,6 +37,9 @@ filters:
 strategies:
   quiet_accumulation:
     weight: 1.0
+    # Optional (W6, docs/05), off: range_exclude_days (judge the range before a late breakout), max_days_since
+    # (carry the signal forward). 2-year test: no shortlist gain; 2025 worse. Note: on this 20-day horizon the
+    # strategy itself only worked in 2026 (2025 PF 0.6); on the position horizon it works in both years.
     params:
       price_window_days: 30
       max_price_range_pct: 12
