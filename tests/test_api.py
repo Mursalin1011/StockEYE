@@ -61,3 +61,26 @@ def test_casestudy_reproduces_the_ptl_case():
     assert cs["chart"]["markers"] and all(m["time"] in times for m in cs["chart"]["markers"])
     assert cs["quality_passed"] is True
     assert client.get("/api/casestudy/NOPE").status_code == 404
+
+
+def test_trade_lab_matches_the_casestudy_breakout():
+    """Same PTL breakout as the case study: bought at the 25 Feb 2026 open, 53.7; markers on chart bars."""
+    meta = client.get("/api/lab").json()
+    assert {"breakout-swing", "ma-pullback"} <= {p["name"] for p in meta["plans"]}
+    plan = next(p["plan"] for p in meta["plans"] if p["name"] == "breakout-swing")
+    d = client.post("/api/simulate", json={"plan": {**plan, "codes": ["PTL"], "from": "2025-11-01"}}).json()
+    feb = next(t for t in d["trades"] if t["entry_date"] == "2026-02-25")
+    assert feb["entry"] == pytest.approx(53.7, abs=0.05) and feb["basket_pct"] is not None
+    times = {b["time"] for b in d["chart"]["bars"]}
+    assert d["chart"]["trades"] and all(m["time"] in times for m in d["chart"]["trades"])
+    assert [o["name"] for o in d["chart"]["overlays"]] == ["sma_20"]
+    assert len(d["equity"]["PTL"]) == len([b for b in d["chart"]["bars"] if b["time"] >= d["stocks"][0]["start"]])
+
+
+def test_trade_lab_errors_are_readable():
+    r = client.post("/api/simulate", json={"plan": {"codes": ["PTL"], "entry": {"when": ["close >> sma_5"]}}})
+    assert r.status_code == 400 and "entry.when" in r.json()["detail"]
+    r = client.post("/api/simulate", json={"plan": {"codes": ["PTL"], "entry": {"when": ["close > smaa_5"]}}})
+    assert r.status_code == 400 and "unknown column" in r.json()["detail"]
+    assert client.post("/api/plans", json={"name": "Bad Name!", "plan": {"entry": {"when": ["close > 1"]}}}).status_code == 400
+    assert client.post("/api/plans", json={"name": "ma-pullback", "plan": {"entry": {"when": ["close > 1"]}}}).status_code == 409

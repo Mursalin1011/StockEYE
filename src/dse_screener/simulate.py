@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from .config import TradePlan, condition_text, load_profile
+from . import rules
+from .config import Profile, TradePlan, condition_text, load_profile
 from .features import Columns
 from .strategies import REGISTRY, Strategy
 
@@ -38,6 +39,7 @@ class LabResult:
     stocks: pd.DataFrame          # per code: window, buy & hold, plan return, drawdowns, time in market
     warnings: list[str] = field(default_factory=list)
     pending: list[str] = field(default_factory=list)   # signals on the last stored day (buy at the next open)
+    basket: str | None = None     # what add_basket compared with, e.g. "61 swing quality stocks"
 
 
 def entry_strategy(plan: TradePlan) -> tuple[Strategy | None, pd.Timestamp | None]:
@@ -154,7 +156,7 @@ def _simulate_stock(plan: TradePlan, g: pd.DataFrame, strategy: Strategy | None)
         warm = cols.first_valid(e_cfg.when + x_cfg.when_any)
         if strategy is not None:
             warm = max(warm, strategy.min_history)
-        if warm > w0:
+        if warm > w0 and plan.start is not None:      # only worth saying when you chose the start
             first = g["date"].iloc[warm] if warm < n else None
             notes.append(f"{code}: indicators need {warm} trading days of history; first possible signal "
                          + (f"{first:%Y-%m-%d}" if first is not None else "never (not enough data)"))
@@ -292,6 +294,49 @@ def _max_drawdown(values: pd.Series) -> float:
     return float(((v / v.cummax() - 1) * 100).min()) if len(v) else np.nan
 
 
+def quality_codes(profile: Profile, metrics: pd.DataFrame, universe: list[str]) -> list[str]:
+    """The profile's universe stocks that pass its quality filter today: the basket the backtest also uses."""
+    qf = profile.filters.get("quality")
+    q = rules.evaluate(metrics, qf.rules if qf and qf.enabled else {})
+    keep = set(universe)
+    return [c for c in q.index[q["passed"]] if c in keep]
+
+
+def add_basket(result: LabResult, prices: pd.DataFrame, codes: list[str], label: str) -> None:
+    """Compare with an equal-weight basket of `codes` over the same dates (in place).
+
+    Per trade: every basket stock that traded on the entry day, bought like the trade (that day's open, or its
+    close with same_close) and sold at its close on the exit day, net of the same cost -> basket_pct, excess_pct.
+    Per stock: the basket held over the stock's window (first open to last close) -> basket_hold_pct.
+    """
+    p = prices[prices["code"].isin(codes)]
+    if p.empty:
+        return
+    close = p.pivot(index="date", columns="code", values="close").astype(float)
+    open_ = p.pivot(index="date", columns="code", values="open").astype(float).fillna(close)
+    traded = p.assign(t=p["volume"].fillna(0).astype(float) > 0).pivot(index="date", columns="code", values="t")
+    traded = traded.astype("boolean").fillna(False).astype(bool)
+    buy = open_ if result.plan.entry.fill == "next_open" else close
+    cost = result.plan.costs.round_trip_pct
+
+    def basket(d0, d1, px0, mask=None) -> float:
+        if d0 not in close.index or d1 not in close.index:
+            return np.nan
+        r = close.loc[d1] / px0.loc[d0] - 1
+        if mask is not None:
+            r = r[mask.loc[d0]]
+        r = r.dropna()
+        return float(r.mean() * 100 - cost) if len(r) else np.nan
+
+    t = result.trades
+    t["basket_pct"] = [basket(a, b, buy, traded) for a, b in zip(t["entry_date"], t["exit_date"])]
+    t["excess_pct"] = t["ret_pct"] - t["basket_pct"]
+    if not result.stocks.empty:
+        result.stocks["basket_hold_pct"] = [basket(a, b, open_) for a, b in
+                                            zip(result.stocks["start"], result.stocks["end"])]
+    result.basket = label
+
+
 def summarize(result: LabResult) -> pd.DataFrame:
     """Stats on closed trades: all, tuning/test periods (plan.in_sample_until), per stock, per exit reason."""
     t = result.trades[result.trades["why"] != "open"]
@@ -316,6 +361,11 @@ def summarize(result: LabResult) -> pd.DataFrame:
             "profit_factor": win.sum() / -loss.sum() if loss.sum() < 0 else np.nan,
             "best": r.max(), "worst": r.min(), "median_days": gg["days"].median(),
         })
+        if "basket_pct" in gg:
+            x = gg["excess_pct"]
+            rows[-1].update({"mean_basket": gg["basket_pct"].mean(), "mean_excess": x.mean(),
+                             "median_excess": x.median(),
+                             "beat_basket": (x > 0).mean() * 100 if x.notna().any() else np.nan})
     return pd.DataFrame(rows).set_index("segment")
 
 

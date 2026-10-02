@@ -67,7 +67,20 @@ export type IndicatorRow = {
   hist: number | null;
 };
 export type Marker = { time: string; strategy: string; title: string; score: number };
-export type ChartData = { code: string; profile: string; bars: Bar[]; indicators: IndicatorRow[]; markers: Marker[]; ex_dates: string[] };
+/** Trade lab: a buy or sell on the chart (sell carries the trade's net return). */
+export type TradeMark = { time: string; side: "buy" | "sell"; price: number; ret?: number; text: string };
+/** A price-unit column drawn over the candles, e.g. sma_50. */
+export type Overlay = { name: string; points: { time: string; value: number }[] };
+export type ChartData = {
+  code: string;
+  profile: string;
+  bars: Bar[];
+  indicators: IndicatorRow[];
+  markers: Marker[];
+  ex_dates: string[];
+  trades?: TradeMark[];
+  overlays?: Overlay[];
+};
 
 export type StockDetail = {
   company: Record<string, string | number | null>;
@@ -258,4 +271,123 @@ export type ReviewDetail = {
   review: ReviewBody;
   docs: { id: number; source: string | null; filename: string; doc_type: string; published: string | null; url: string | null }[];
   scores: { code: string; stance: Stance; horizon_days: number; confidence: number; ret: number | null; bench: number | null; excess: number | null; correct: number | null }[];
+};
+
+// --- trade lab (docs/06-trade-lab-plan.md) -------------------------------------
+
+/** [left column, operator, right column or number], e.g. ["rsi_14", "<", 40] */
+export type Condition = [string, string, number | string];
+
+export type PlanJson = {
+  name: string;
+  description: string;
+  codes: string[];
+  from: string | null;
+  to: string | null;
+  entry: {
+    strategy: string | null;
+    profile: string | null;
+    params: Record<string, unknown>;
+    when: Condition[];
+    dates: string[];
+    fill: "next_open" | "same_close";
+    new_signal_only: boolean;
+  };
+  exit: {
+    stop_pct: number | null;
+    target_pct: number | null;
+    trail_pct: number | null;
+    trail_ma: number | null;
+    when_any: Condition[];
+    max_days: number | null;
+  };
+  hold: { min_days: number; cooldown_days: number };
+  costs: { round_trip_pct: number };
+  capital: { start: number; per_trade_pct: number };
+  in_sample_until: string | null;
+};
+
+export type LabColumn = { name: string; example: string; description: string; windowed: boolean };
+
+export type SavedPlan = { name: string; description?: string; plan?: PlanJson; describe?: string[]; error?: string };
+
+export type LabMeta = {
+  plans: SavedPlan[];
+  columns: LabColumn[];
+  operators: string[];
+  strategies: { name: string; title: string }[];
+  profiles: string[];
+  first_date: string;
+  last_date: string;
+  default_plan: PlanJson;
+};
+
+export type LabTrade = {
+  code: string;
+  signal_date: string;
+  entry_date: string;
+  entry: number;
+  entry_actual: number;
+  exit_date: string;
+  exit: number;
+  exit_actual: number;
+  why: string;
+  days: number;
+  ret_pct: number;
+  best_pct: number | null;
+  worst_pct: number | null;
+  flags: string;
+  basket_pct?: number | null;
+  excess_pct?: number | null;
+};
+
+export type LabSummaryRow = {
+  segment: string;
+  trades: number;
+  win_rate: number | null;
+  mean_ret: number | null;
+  median_ret: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  best: number | null;
+  worst: number | null;
+  median_days: number | null;
+  mean_basket?: number | null;
+  mean_excess?: number | null;
+  median_excess?: number | null;
+  beat_basket?: number | null;
+};
+
+export type LabStock = {
+  code: string;
+  start: string;
+  end: string;
+  first_close: number;
+  last_close: number;
+  buy_hold_pct: number;
+  buy_hold_max_dd_pct: number;
+  plan_pct: number;
+  plan_max_dd_pct: number;
+  in_market_pct: number;
+  trades: number;
+  open: number;
+  end_equity: number;
+  basket_hold_pct?: number | null;
+};
+
+export type EquityPoint = { time: string; plan: number; hold: number };
+
+export type LabResultView = {
+  plan: PlanJson;
+  describe: string[];
+  trades: LabTrade[];
+  summary: LabSummaryRow[];
+  stocks: LabStock[];
+  warnings: string[];
+  pending: string[];
+  basket: string | null;
+  equity: Record<string, EquityPoint[]>;
+  chart_code: string | null;
+  chart: ChartData | null;
 };

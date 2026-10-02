@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/quality", label: "Quality" },
   { href: "/backtest", label: "Backtest" },
   { href: "/casestudy", label: "Case study" },
+  { href: "/lab", label: "Trade lab" },
   { href: "/research", label: "Research" },
   { href: "/settings", label: "Settings" },
 ];

@@ -1,11 +1,13 @@
 """FastAPI app serving the stored data, screens, charts and backtests as JSON.
 
-Read-mostly: the only write is POST /api/screens/run. Bound to localhost by the CLI.
+Read-mostly: the writes are POST /api/screens/run, the research uploads and saving trade-lab plans.
+Bound to localhost by the CLI.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import uuid
@@ -15,10 +17,11 @@ from datetime import date
 import pandas as pd
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from .. import backtest, casestudy, engine, indicators, quality, report, rules
-from ..config import CONFIG_DIR, list_profiles, load_profile, load_settings
+from .. import backtest, casestudy, engine, features, indicators, quality, report, rules, simulate
+from ..config import (CONFIG_DIR, OPERATORS, TradePlan, list_plans, list_profiles, load_plan, load_profile,
+                      load_settings, plan_path, plan_to_yaml_data)
 from ..universes import universe_codes as resolve_universe
 from ..db import Database
 from ..strategies import REGISTRY
@@ -352,6 +355,148 @@ def casestudy_view(code: str, profile: str = "swing", start: date | None = None,
         "moves": records(cs.moves),
         "chart": chart_data,
     }
+
+
+# --- trade lab (docs/06-trade-lab-plan.md) -------------------------------------
+
+def _plan_json(plan: TradePlan) -> dict:
+    return plan.model_dump(mode="json", by_alias=True)
+
+
+def _validate_plan(data: dict) -> TradePlan:
+    try:
+        return TradePlan.model_validate(data)
+    except ValidationError as e:
+        msgs = []
+        for err in e.errors():
+            where = ".".join(str(x) for x in err["loc"])
+            msgs.append(f"{where}: {err['msg'].removeprefix('Value error, ')}" if where else err["msg"])
+        raise HTTPException(400, "; ".join(msgs)) from e
+
+
+@app.get("/api/lab")
+def lab_meta(db: Database = Depends(get_db)):
+    """Saved plans, condition columns, strategies and profiles for the trade lab form."""
+    plans = []
+    for name in list_plans():
+        try:
+            plan = load_plan(name)
+        except (ValueError, OSError) as e:
+            plans.append({"name": name, "error": str(e)})
+            continue
+        plans.append({"name": name, "description": plan.description, "plan": _plan_json(plan),
+                      "describe": simulate.describe(plan)})
+    first, last = db.date_range()
+    return {
+        "plans": plans, "columns": features.catalog(), "operators": list(OPERATORS),
+        "strategies": [{"name": n, "title": cls.title} for n, cls in REGISTRY.items()],
+        "profiles": list_profiles(settings), "first_date": first, "last_date": last,
+        "default_plan": _plan_json(TradePlan.model_validate({"entry": {"when": ["close > sma_50"]}})),
+    }
+
+
+class SimulateBody(BaseModel):
+    plan: dict
+    basket_profile: str | None = "swing"   # compare with that profile's quality-passing stocks; None = off
+    chart_code: str | None = None          # which stock's chart to return (default: the first)
+
+
+def _basket_codes(profile: str, db: Database) -> list[str]:
+    prof = _profile(profile)
+    return simulate.quality_codes(prof, quality_metrics(db), resolve_universe(prof.universe, db))
+
+
+@app.post("/api/simulate")
+def simulate_view(body: SimulateBody, db: Database = Depends(get_db)):
+    """Run a trade plan: trades, stats, per-stock results, basket comparison, equity curves, one chart."""
+    plan = _validate_plan(body.plan)
+    if not plan.codes:
+        raise HTTPException(400, "Pick at least one stock")
+    if len(plan.codes) > 20:
+        raise HTTPException(400, "At most 20 stocks per run")
+    prices = engine.load_adjusted_prices(db, settings, plan.codes)
+    try:
+        res = simulate.run_plan(plan, prices)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    if body.basket_profile and not res.stocks.empty:
+        codes = _basket_codes(body.basket_profile, db)
+        simulate.add_basket(res, adjusted_prices(db), codes, f"{len(codes)} {body.basket_profile} quality stocks")
+
+    summary = simulate.summarize(res).reset_index() if not res.trades.empty else pd.DataFrame()
+    stocks = res.stocks.reset_index() if not res.stocks.empty else pd.DataFrame()
+    # Equity per stock, with buy & hold of the same stock on the same money (first open, marked at each close)
+    equity = {}
+    for code, e in res.equity.groupby("code", sort=False):
+        g = prices[(prices["code"] == code) & prices["date"].isin(e["date"])].sort_values("date")
+        first = g["open"].iloc[0] if pd.notna(g["open"].iloc[0]) else g["close"].iloc[0]
+        hold = plan.capital.start * g["close"].to_numpy(float) / first
+        equity[code] = [{"time": d.strftime("%Y-%m-%d"), "plan": round(float(v), 2), "hold": round(float(h), 2)}
+                        for d, v, h in zip(e["date"], e["equity"], hold)]
+
+    chart_code = (body.chart_code or "").upper() if (body.chart_code or "").upper() in plan.codes else None
+    chart_code = chart_code or (stocks["code"].iloc[0] if len(stocks) else None)
+    chart = _lab_chart(db, plan, prices, res, chart_code) if chart_code else None
+    return {
+        "plan": _plan_json(plan), "describe": simulate.describe(plan),
+        "trades": records(res.trades), "summary": records(summary), "stocks": records(stocks),
+        "warnings": res.warnings, "pending": res.pending, "basket": res.basket,
+        "equity": equity, "chart_code": chart_code, "chart": chart,
+    }
+
+
+def _lab_chart(db: Database, plan: TradePlan, prices: pd.DataFrame, res: simulate.LabResult, code: str) -> dict:
+    """The stock's chart over the window (plus 60 days before), buy/sell markers, price-unit columns the plan uses."""
+    g = prices[prices["code"] == code].sort_values("date").reset_index(drop=True)
+    st = res.stocks.loc[code]
+    rows = g.index[(g["date"] >= st["start"]) & (g["date"] <= st["end"])]
+    start, end = max(int(rows[0]) - 60, 0), int(rows[-1]) + 1
+    payload = _chart_payload(db, code, "lab", g, [], start, end)
+    t = res.trades[res.trades["code"] == code]
+    marks = []
+    for r in t.itertuples():
+        marks.append({"time": r.entry_date.strftime("%Y-%m-%d"), "side": "buy", "price": round(r.entry, 2),
+                      "text": f"Buy {r.entry:.1f}"})
+        if r.why != "open":
+            marks.append({"time": r.exit_date.strftime("%Y-%m-%d"), "side": "sell", "price": round(r.exit, 2),
+                          "ret": round(r.ret_pct, 2), "text": f"Sell {r.exit:.1f} ({r.why}) {r.ret_pct:+.1f}%"})
+    payload["trades"] = marks
+    names = [n for cd in [*plan.entry.when, *plan.exit.when_any] for n in (cd[0], cd[2])
+             if isinstance(n, str) and features.PRICE_UNITS.match(n) and n not in features.PRICE]
+    if plan.exit.trail_ma:
+        names.append(f"sma_{plan.exit.trail_ma}")
+    cols = features.Columns(g)
+    overlays = []
+    for name in dict.fromkeys(names):
+        if len(overlays) == 3:
+            break
+        v = cols[name].iloc[start:end]
+        overlays.append({"name": name, "points": [{"time": d.strftime("%Y-%m-%d"), "value": round(float(x), 3)}
+                                                  for d, x in zip(g["date"].iloc[start:end], v) if pd.notna(x)]})
+    payload["overlays"] = overlays
+    return payload
+
+
+class SavePlanBody(BaseModel):
+    name: str
+    plan: dict
+    overwrite: bool = False
+
+
+@app.post("/api/plans")
+def save_plan(body: SavePlanBody):
+    """Save a plan as config/plans/<name>.yaml (lowercase letters, digits, - and _)."""
+    name = body.name.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,40}", name):
+        raise HTTPException(400, "Plan name: lowercase letters, digits, - and _ (up to 41 characters), e.g. ma-pullback")
+    plan = _validate_plan({**body.plan, "name": name})
+    path = plan_path(name)
+    if path.exists() and not body.overwrite:
+        raise HTTPException(409, f"A plan called '{name}' already exists")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = yaml.safe_dump(plan_to_yaml_data(plan), sort_keys=False, allow_unicode=True)
+    path.write_text("# Trade lab plan (docs/06-trade-lab-plan.md), saved from the dashboard.\n" + text, encoding="utf-8")
+    return {"name": name, "path": f"config/plans/{name}.yaml"}
 
 
 @app.get("/api/config/raw")

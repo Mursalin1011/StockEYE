@@ -23,6 +23,26 @@ export async function api<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** POST JSON to the API (e.g. a trade-lab simulation). Errors carry the API's readable detail. */
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+  } catch {
+    throw new ApiError(503, `Can't reach the StockEYE API at ${API_URL}. Start it with: python -m dse_screener api`);
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, typeof data.detail === "string" ? data.detail : `API ${path} failed with HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 /** Like api(), but returns null on 404 (e.g. no saved screen yet). */
 export async function apiOrNull<T>(path: string): Promise<T | null> {
   try {

@@ -52,6 +52,22 @@ FIXED: dict[str, str] = {
 _NAME = re.compile(rf"^({'|'.join(sorted(WINDOWED, key=len, reverse=True))})_(\d+)$")
 
 
+# Typical N per windowed column, for examples and pickers
+EXAMPLE_N = {"sma": 50, "ema": 20, "rsi": 14, "atr": 14, "high": 20, "low": 20, "vol_x": 20, "avg_vol": 20,
+             "ret": 20, "pct_from_high": 250}
+# Columns in price units (can be drawn on the price chart)
+PRICE_UNITS = re.compile(r"^(open|high|low|close|(sma|ema|high|low)_\d+)$")
+
+
+def catalog() -> list[dict]:
+    """Every column as {name, example, description, windowed}, for the trade lab's pickers."""
+    out = [{"name": c, "example": c, "description": "the day's price / volume", "windowed": False} for c in PRICE]
+    out += [{"name": f"{k}_N", "example": f"{k}_{EXAMPLE_N[k]}", "description": d, "windowed": True}
+            for k, (d, _) in WINDOWED.items()]
+    out += [{"name": k, "example": k, "description": d, "windowed": False} for k, d in FIXED.items()]
+    return out
+
+
 def known() -> list[str]:
     """One line per column, for help texts and error messages."""
     return ([f"{' '.join(PRICE)}: the day's prices and volume"] + [f"{k}_N: {d}" for k, (d, _) in WINDOWED.items()]

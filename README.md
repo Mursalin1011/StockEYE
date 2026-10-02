@@ -128,6 +128,9 @@ Use a saved plan from `config/plans/`, flags, or both (flags win):
 ```
 
 `simulate --help` lists every column a condition can use (`sma_N`, `rsi_N`, `high_N`, `vol_x_N`, ...).
+Add `--basket swing` to compare each trade with an equal-weight basket of the swing profile's quality stocks.
+The dashboard's **Trade lab** page does the same with a form: build the rules, run, see the trades on the
+chart and the equity curve against buy & hold, and save the plan to `config/plans/`.
 
 ## AI research review
 

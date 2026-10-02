@@ -129,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="override any plan value, e.g. exit.stop_pct=6 or entry.params.base_days=30")
     p.add_argument("--csv", type=Path, help="write the trades to this CSV file")
     p.add_argument("--equity-csv", type=Path, help="write the daily equity curve to this CSV file")
+    p.add_argument("--basket", metavar="PROFILE",
+                   help="also compare with an equal-weight basket of this profile's quality stocks, e.g. swing (slower)")
 
     p = sub.add_parser("research", help="research PDFs and the AI review (see config/research/ANALYST.md)")
     rs = p.add_subparsers(dest="research_cmd", required=True)
@@ -553,6 +555,12 @@ def cmd_simulate(args, settings, db) -> int:
         res = simulate.run_plan(plan, prices)
     except ValueError as e:
         raise SystemExit(str(e))
+    if args.basket and not res.stocks.empty:
+        prof = load_profile(args.basket)
+        universe = universe_codes(prof.universe, db)
+        codes = simulate.quality_codes(prof, quality.compute_quality_metrics(db, universe), universe)
+        simulate.add_basket(res, engine.load_adjusted_prices(db, settings, codes), codes,
+                            f"{len(codes)} {args.basket} quality stocks")
     _print_simulation(res)
     if args.csv:
         res.trades.to_csv(args.csv, index=False, float_format="%.2f")
@@ -582,6 +590,8 @@ def _print_simulation(res: simulate.LabResult) -> None:
             "why": t["why"], "days": t["days"], "net%": t["ret_pct"], "best%": t["best_pct"],
             "worst%": t["worst_pct"], "flags": t["flags"],
         })
+        if res.basket:
+            table.insert(table.columns.get_loc("net%") + 1, "vs basket%", t["excess_pct"])
         adjusted = (t["entry_actual"] - t["entry"]).abs().gt(1e-9).any() or (t["exit_actual"] - t["exit"]).abs().gt(1e-9).any()
         if not adjusted:
             table = table.drop(columns=["actual", "actual "])
@@ -598,6 +608,8 @@ def _print_simulation(res: simulate.LabResult) -> None:
         cols = {"trades": "trades", "win_rate": "win%", "mean_ret": "mean%", "median_ret": "median%",
                 "avg_win": "avg win%", "avg_loss": "avg loss%", "profit_factor": "PF", "best": "best%",
                 "worst": "worst%", "median_days": "days"}
+        if res.basket:
+            cols |= {"mean_excess": "vs basket%", "beat_basket": "beat%"}
         s = simulate.summarize(res)
         if s.loc["all", "trades"]:
             print("\nSummary (closed trades; PF = profit factor, gross wins / gross losses):")
@@ -612,10 +624,14 @@ def _print_simulation(res: simulate.LabResult) -> None:
             "plan max DD%": st["plan_max_dd_pct"], "B&H max DD%": st["buy_hold_max_dd_pct"],
             "in market%": st["in_market_pct"], "trades": st["trades"], "end equity": st["end_equity"],
         })
+        if res.basket:
+            out.insert(2, "basket held%", st["basket_hold_pct"])
         print("\nPer stock (plan = equity growth with the sizing above; buy & hold = first open to last close, "
               "less one round trip; DD = largest fall from a high):")
         with pd.option_context("display.width", 220, "display.float_format", "{:,.1f}".format):
             print(out.to_string())
+    if res.basket:
+        print(f"\nBasket: {res.basket}, equal weight, bought and sold on each trade's days (vs basket = trade - basket).")
     for line in res.pending:
         print("\nSignal now: " + line)
     if res.warnings:

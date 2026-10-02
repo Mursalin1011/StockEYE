@@ -1,6 +1,6 @@
 # Trade lab: test your own entry/exit rules on any stock
 
-_Status: v0.2 · 2026-10-02 · phase 1 done_
+_Status: v0.3 · 2026-10-02 · phases 1 and 2 done_
 
 ## 1. Why
 
@@ -96,7 +96,7 @@ Per stock, day by day: flat → in a position → flat.
 | # | What | Status |
 |---|---|---|
 | **1** | Plan model, column library, simulation engine (strategy / condition / date entries, every exit type), stats, CLI `simulate`, example plans, tests | ✅ 2026-10-02 |
-| **2** | `POST /api/simulate`, `/lab` web page (stock picker, entry/exit builders, chart with entry/exit markers, trade table, save plan), equal-weight basket benchmark (needs all prices; the API already caches them) | |
+| **2** | `POST /api/simulate`, `/lab` web page (stock picker, entry/exit builders, chart with entry/exit markers, trade table, save plan), equal-weight basket benchmark (needs all prices; the API already caches them) | ✅ 2026-10-02 |
 | **3** | Same plan over a list or universe; portfolio mode (shared capital, max open positions); parameter grid shown for tuning vs test period; liquidity check (position size vs traded value) | |
 
 ## 7. Caveats
@@ -118,3 +118,22 @@ Per stock, day by day: flat → in a position → flat.
 - Example: PTL, 13 Nov 2025 buy with a −10% stop: the low hit −15% the next day, but the shares weren't sellable yet
   (`min_days: 2`); the stop couldn't fire, and the trade left two days later on the MA rule at −2.7%. Use `--min-days 0`
   to ignore settlement.
+
+## 9. Phase 2 results (2026-10-02)
+
+- **Dashboard → Trade lab** (`/lab`): stock chips, dates, a saved-plan picker (loads its rules, keeps your stocks
+  and dates), Buy (strategy signal and/or conditions, or buy dates), Sell, Hold & money, **Save plan**
+  (writes `config/plans/<name>.yaml`; asks before replacing). The plan travels in the URL (`?p=`), so a result is a
+  shareable link; `?plan=NAME[&code=X]` runs a saved plan.
+- Results: plan in words, stat tiles (trades, win rate, average, profit factor, plan vs buy & hold, vs basket),
+  warnings and "signal now", per-stock table (plan / buy & hold / basket held / drawdowns / time in market), price
+  chart with **B**uy / **S**ell markers (sell coloured by result) and the price-level columns the plan uses (e.g. MA20),
+  equity chart (plan vs buy & hold, same money), trade list, summary by period / stock / exit reason.
+- **Basket benchmark**: equal-weight basket of a profile's quality stocks (default `swing`, 71 stocks), bought and sold
+  on each trade's days, so "vs basket" shows whether the rule beat the market on the same dates. Also in the CLI:
+  `simulate ... --basket swing`.
+- API: `GET /api/lab` (saved plans, columns, strategies, profiles), `POST /api/simulate`, `POST /api/plans`.
+  First run ~4 s (loads all prices for the basket), then ~0.4 s (cached).
+- Checks: API tests (same PTL 25 Feb 2026 entry as the case study, markers on chart days, readable errors, plan-name
+  and overwrite rules); a basket unit test; the form driven in headless Edge (add stocks, add a condition, run, save,
+  replace, load a plan).

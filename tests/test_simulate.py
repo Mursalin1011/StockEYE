@@ -220,3 +220,20 @@ def test_actual_prices_undo_the_adjustment():
     g = _prices([50, 50, 50, 50, 50]).assign(price_adj=[0.5, 0.5, 0.5, 1.0, 1.0])
     t = run_plan(_plan(exit={"max_days": 3}), g).trades.iloc[0]
     assert (t["entry_actual"], t["exit_actual"]) == (100, 50) and t["ret_pct"] == pytest.approx(0)
+
+
+def test_basket_uses_the_trade_dates_and_only_stocks_that_traded():
+    from dse_screener.simulate import add_basket
+
+    g = _prices([100, 100, 110, 110, 121, 121])
+    res = run_plan(_plan(entry={"dates": ["2025-01-02"]}, exit={"max_days": 2}, costs={"round_trip_pct": 1}), g)
+    # basket: BBB +20% over the trade (open row 1 -> close row 2); CCC didn't trade on the entry day: left out
+    bbb = _prices([50, 50, 60, 60, 60, 60], code="BBB")
+    ccc = _prices([10, 10, 99, 99, 99, 99], code="CCC", volume=[1, 0, 1, 1, 1, 1])
+    add_basket(res, pd.concat([bbb, ccc]), ["BBB", "CCC"], "2 test stocks")
+    t = res.trades.iloc[0]
+    assert t["ret_pct"] == pytest.approx(9) and t["basket_pct"] == pytest.approx(19)
+    assert t["excess_pct"] == pytest.approx(-10)
+    assert res.stocks.loc["AAA", "basket_hold_pct"] == pytest.approx(((60 / 50 - 1) + (99 / 10 - 1)) / 2 * 100 - 1)
+    s = summarize(res)
+    assert s.loc["all", "mean_excess"] == pytest.approx(-10) and s.loc["all", "beat_basket"] == 0

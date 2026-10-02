@@ -264,6 +264,25 @@ def condition_text(c: Condition) -> str:
     return f"{left} {op.replace('_', ' ')} {right:g}" if isinstance(right, float) else f"{left} {op.replace('_', ' ')} {right}"
 
 
+def condition_str(c: Condition) -> str:
+    """Round-trippable text form, e.g. 'rsi_14 < 40' (what plan YAML files use)."""
+    left, op, right = c
+    return f"{left} {op} {right:g}" if isinstance(right, float) else f"{left} {op} {right}"
+
+
+def plan_to_yaml_data(plan: "TradePlan") -> dict:
+    """A plan as a tidy dict for a YAML file: defaults left out, conditions as text."""
+    data = plan.model_dump(mode="json", by_alias=True, exclude_defaults=True)
+    data["name"] = plan.name
+    data["entry"] = {**data.get("entry", {})}
+    if plan.entry.when:
+        data["entry"]["when"] = [condition_str(c) for c in plan.entry.when]
+    if plan.exit.when_any:
+        data.setdefault("exit", {})["when_any"] = [condition_str(c) for c in plan.exit.when_any]
+    order = ["name", "description", "codes", "from", "to", "entry", "exit", "hold", "costs", "capital", "in_sample_until"]
+    return {k: data[k] for k in order if k in data}
+
+
 class PlanEntry(BaseModel):
     """When to buy. A signal on day t (after the close) buys at t+1's open, or at t's close with same_close."""
 
