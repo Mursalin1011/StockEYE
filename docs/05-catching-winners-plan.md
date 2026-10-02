@@ -80,8 +80,8 @@ What this says:
 
 | # | Upgrade | Why (evidence) | How we'll know it works |
 |---|---|---|---|
-| **W1** | **Case-study tool**: `python -m dse_screener casestudy PTL --from 2025-11-01`, plus a dashboard page. Any stock you spot → timeline of every signal on the chart, entries, outcomes | Lets you test stocks like PTL yourself in seconds | Reproduces this document's PTL table |
-| **W2** | **Backtest metrics**: mean, profit factor, avg win/loss, recall on big winners; exit modes (fixed / stop + trailing MA / time stop) | Median-only reporting hides positive-skew strategies | Summary shows both views; this doc's numbers reproduced |
+| **W1** ✅ | **Case-study tool**: `python -m dse_screener casestudy PTL --from 2025-11-01`, plus a dashboard page. Any stock you spot → timeline of every signal on the chart, entries, outcomes | Lets you test stocks like PTL yourself in seconds | Reproduces this document's PTL table |
+| **W2** ✅ | **Backtest metrics**: mean, profit factor, avg win/loss, recall on big winners; exit modes (fixed / stop + trailing MA / time stop) | Median-only reporting hides positive-skew strategies | Summary shows both views; this doc's numbers reproduced |
 | **W3** | **All-equities universe** with fundamentals for every company (one-time ~25 min, then weekly) and instrument type from DSE (not name rules); dividend/bonus adjustment for all | PTL-type misses; quality matters most outside DS30 | Daily screen of ~300 quality-passing equities within the 3pm job |
 | **W4** ✅ | **Re-entry after a shakeout**: if a breakout fails (stop or close back in the base) but the stock **re-breaks the base high on ≥ 2× volume within 40 days**, signal again with a "second breakout" reason | PTL's real move started at the second breakout | Backtest: more winners captured per false alarm |
 | **W5** | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
@@ -106,6 +106,55 @@ then W4–W6 (each measured with W2 on the wider universe), then W7 and W8.
 4. Any **other winners** you remember, to add to the case-study set (the more examples, the better the tuning)?
 
 ## 6. Results
+
+### W2: backtest metrics, exit styles and recall, 2026-10-02
+`backtest` (CLI and dashboard) now reports mean, avg win / avg loss, **profit factor**, rule-based **exit styles**
+(`backtest.exits`: stop on the low, trailing MA on the close, time limit; same entries as the fixed holds)
+and **recall** on big winners (`backtest.winners`).
+
+**Big-move counting changed.** Section 2 counted every day a +50% run-up was still ahead, so one run-up
+with pullbacks counted many times (PTL: 6 "moves" in 2026). Now one run-up = one move (from its first day
+to its peak). On the 71 swing-quality stocks that is **52 moves**, not 160, so signals per catch are
+higher than in section 2 and not comparable.
+
+Shortlist backtest, all-A universe (2024-09-30 → 2026-10-01, net of 1%):
+
+| Profile | Exit | Trades | Mean | PF | Mean vs basket 2025 / 2026 | PF 2025 / 2026 |
+|---|---|---|---|---|---|---|
+| swing | fixed 20d | 250 | +1.3 | 1.5 | −0.1 / +1.3 | 1.1 / 2.1 |
+| swing | −8% stop, below MA20 (max 60d) | 252 | +1.3 | 1.5 | +0.1 / +0.8 | 1.4 / 1.7 |
+| swing | −8% stop, below MA50 (max 120d) | 251 | +0.5 | 1.2 | −0.7 / +0.7 | 1.0 / 1.3 |
+| position | fixed 60d | 103 | +3.4 | 2.0 | **+2.3 / +1.7** | **2.3 / 1.7** |
+| position | −10% stop, below MA50 (max 120d) | 105 | +1.8 | 1.6 | +1.8 / −0.0 | 2.5 / 1.1 |
+| position | −15% stop, below MA100 (max 120d) | 98 | −0.1 | 1.0 | +1.3 / −0.9 | 1.6 / 0.5 |
+
+Recall (moves of +50% within 120 days; caught 20 days before to 60 after the start at ≤ +20%):
+
+| Profile | Moves | Shortlist recall | 2025 / 2026 | Signals per catch |
+|---|---|---|---|---|
+| swing | 52 | **46%** | 39% / 100% (6 moves) | 10.5 |
+| position | 34 | 18% | 14% / 40% (5 moves) | 17.7 |
+
+Against the acceptance criteria (section 4):
+- **Position, fixed 60 days, meets the return criteria in both periods** (mean vs basket > 0, PF ≥ 1.5).
+  Its recall (18%) is low: it buys fewer, slower moves.
+- **Swing meets the recall target (46% ≥ 40%)** but not "≤ 3 signals per catch" (10.5 with the stricter move count;
+  the target was set on the old count and should be revisited). Returns pass in 2026 only; 2025 fails (PF 1.1).
+- **Exits:** stop + MA20 smooths swing's 2025 (PF 1.1 → 1.4) at no cost overall, but doesn't change the verdict.
+  Slower trailing exits (MA50 / MA100) are worse for both profiles: DSE run-ups pull back hard. Fixed holds stay the default.
+- 2026 has few complete big moves yet (6), so its recall is not meaningful.
+
+### W1: case-study tool, 2026-10-02
+`python -m dse_screener casestudy PTL --from 2025-11-01 [--profile swing] [--shortlist] [--csv out.csv]` and the
+dashboard **Case study** page (also linked from each stock page). For any stock, even one that fails the
+quality filter: every signal run (incl. those blocked by the RSI/MACD filter), the stock's best score in the run
+and the day it cleared the shortlist cut, outcomes for each holding period and exit style, best/worst within the
+main hold, return to the last close, and the stock's big moves with which strategies caught them early.
+
+It reproduces the PTL table in section 1 (returns there are gross; the tool shows them net of 1%):
+swing base breakout 24 Feb → shortlisted 25 Feb at 82, entry 53.7, +51.5% net to 1 Oct; swing quiet accumulation
+1 Apr, entry 55.0, +47.9%; position base breakout 25 Feb / 12 Apr, scores 66 / 70, entries 55.9 / 59.4.
+With `--shortlist`, PTL ranks #4 on 25 Feb among the 71 stocks (it was #1 in the old DS30 + PTL universe).
 
 ### W4: re-entry after a shakeout (`second_breakout`), 2026-10-01
 A base breakout that closes back below the old base high (without closing more than 5% under the base low),

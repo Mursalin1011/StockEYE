@@ -104,6 +104,18 @@ Every parameter and its default is documented in `src/dse_screener/strategies/<n
 `tune` chooses settings on the tuning period (up to `backtest.in_sample_until`) and shows how they did
 on the later, untouched test period, which is the honest check.
 
+The backtest reports median **and** mean, profit factor (gross wins / gross losses), average win/loss,
+the fixed holding periods in `backtest.horizons`, any exit styles in `backtest.exits` (e.g.
+`stop8_ma20: {stop_pct: 8, trail_ma: 20, max_days: 60}`), and **recall**: how many big run-ups
+(`backtest.winners`, default +50% within 120 days) the shortlist and each strategy caught early.
+
+**Check a stock you spotted.** `casestudy` shows every signal on one stock over a period, with outcomes
+(also the dashboard's **Case study** page):
+
+```powershell
+.\.venv\Scripts\python.exe -m dse_screener casestudy PTL --from 2025-11-01 [--profile swing] [--shortlist]
+```
+
 ## Daily Telegram summary
 
 1. In Telegram, message **@BotFather**, send `/newbot`, and copy the token.
@@ -130,6 +142,7 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener report          # preview the summary from stored data (--send to send)
 & $py -m dse_screener backtest --profile swing [--set PATH=VALUE] [--csv trades.csv]
 & $py -m dse_screener tune --profile swing --grid PATH=V1,V2
+& $py -m dse_screener casestudy PTL --from 2025-11-01   # every signal on one stock, with outcomes
 & $py -m dse_screener api             # API for the dashboard
 & $py -m pytest                       # tests
 ```
@@ -146,7 +159,8 @@ src/dse_screener/
   indicators.py            # RSI, MACD, moving averages
   strategies/              # one file per strategy; register new ones in strategies/__init__.py
   engine.py                # filter -> strategies -> ranking (shared by live screen and backtest)
-  backtest.py              # next-day entry, costs, benchmark, non-overlapping trades
+  backtest.py              # next-day entry, costs, benchmark, non-overlapping trades, exit styles, recall
+  casestudy.py             # one stock over a period: every signal, outcome and big move
   daily.py, report.py, notify/   # the 3pm job and Telegram
   api/app.py               # FastAPI for the dashboard
 web/                       # Next.js 16 dashboard (App Router, Tailwind, TradingView Lightweight Charts)

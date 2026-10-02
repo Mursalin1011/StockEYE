@@ -98,6 +98,30 @@ export type SummaryRow = {
   beat_bench: number | null;
   worst: number | null;
   best: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  median_days: number | null;
+};
+
+export type ExitStyle = { name: string; label: string; open?: number };
+
+export type RecallRow = {
+  segment: string;
+  moves: number;
+  caught: number;
+  recall_pct: number | null;
+  signals: number;
+  signals_per_catch: number | null;
+  median_days_after_start: number | null;
+};
+
+export type WinnersConfig = {
+  min_gain_pct: number;
+  within_days: number;
+  before_days: number;
+  after_days: number;
+  max_entry_premium_pct: number;
 };
 
 export type BacktestView = {
@@ -108,9 +132,58 @@ export type BacktestView = {
   cost_pct: number;
   primary_horizon: number;
   horizons: number[];
+  exits: ExitStyle[];
   universe_size: number;
   summary: Record<string, SummaryRow[]>;
+  recall: RecallRow[];
+  winners: WinnersConfig;
   trades: (Record<string, string | number | null> & { date: string; code: string; strategies: string })[];
+};
+
+export type CaseSignal = Record<string, string | number | boolean | string[] | null> & {
+  date: string;
+  strategy: string;
+  title: string;
+  role: "primary" | "confirm";
+  status: "signal" | "blocked";
+  score: number;
+  days_on: number;
+  best_score: number | null;
+  clears_cut: boolean;
+  cut_date: string | null;
+  shortlist_rank: number | null;
+  tech: string;
+  blocked_by: string[];
+  reasons: string[];
+  close: number;
+  entry: number | null;
+  best: number | null;
+  worst: number | null;
+  to_last: number | null;
+};
+
+export type CaseMove = { date: string; i: number; start: number; peak_date: string; peak_gain_pct: number; caught_by: string[] };
+
+export type CaseStudyView = {
+  code: string;
+  profile: string;
+  name: string | null;
+  start: string;
+  end: string;
+  last_date: string;
+  last_close: number;
+  window: { first_close: number; last_close: number; change_pct: number; low: number; low_date: string; high: number; high_date: string };
+  quality_passed: boolean;
+  quality_failures: string[];
+  horizons: number[];
+  primary_horizon: number;
+  cost_pct: number;
+  min_score: number;
+  exits: ExitStyle[];
+  shortlist: boolean;
+  signals: CaseSignal[];
+  moves: CaseMove[];
+  chart: ChartData;
 };
 
 export type HistoryRow = { as_of: string; profile: string; rank: number; code: string; final_score: number; strategies: string[] };

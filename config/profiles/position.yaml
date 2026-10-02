@@ -76,6 +76,14 @@ backtest:
   primary_horizon: 60
   cost_pct: 1.0                # round trip, %
   in_sample_until: 2025-12-31  # tune on data up to here; 2026 is the untouched test
+  # Exit styles tested on the same entries as the fixed holds (stop on the intraday low, trailing MA on
+  # the close, time limit counted from the signal day). Name: anything that isn't a number.
+  exits:
+    stop10_ma50: {stop_pct: 10, trail_ma: 50, max_days: 120}
+    stop15_ma100: {stop_pct: 15, trail_ma: 100, max_days: 120}
+  # Recall: a "big winner" move = close rises >= 50% within 120 trading days. Caught = a pick 20 days before
+  # to 60 days after the move starts, entry <= 1.2x the starting price.
+  winners: {min_gain_pct: 50, within_days: 120, before_days: 20, after_days: 60, max_entry_premium_pct: 20}
 
 ranking:
   top_n: 10

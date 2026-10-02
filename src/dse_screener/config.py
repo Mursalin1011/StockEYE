@@ -9,7 +9,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .rules import Rule
 
@@ -158,11 +158,46 @@ class RankingConfig(BaseModel):
     record_date_penalty: float = 20.0
 
 
+class ExitRule(BaseModel):
+    """A rule-based exit, tested on the same entries as the fixed holding periods.
+
+    Checked each trading day after entry, in this order: stop (intraday low), trailing MA
+    (close below it), time limit (close `max_days` trading days after the signal).
+    """
+
+    label: str = ""
+    stop_pct: float | None = None       # sell if the low falls this % below the entry price
+    trail_ma: int | None = None         # sell at the close when the close is below this moving average
+    max_days: int = 60                  # sell at the close this many trading days after the signal
+
+
+class WinnersConfig(BaseModel):
+    """'Big winner' moves for recall: from day t, the close rises min_gain_pct within within_days."""
+
+    min_gain_pct: float = 50.0
+    within_days: int = 120
+    # caught = a pick/signal from `before_days` before to `after_days` after the move's first day,
+    # with an entry no more than max_entry_premium_pct above the move's starting price
+    before_days: int = 20
+    after_days: int = 60
+    max_entry_premium_pct: float = 20.0
+
+
 class BacktestConfig(BaseModel):
     horizons: list[int] = [5, 10, 20]   # trading days held after entry
     primary_horizon: int = 20           # used for non-overlapping trades and tuning
     cost_pct: float = 1.0               # round trip: brokerage both sides + CDBL/other charges
     in_sample_until: date | None = None # tune on dates up to here; later dates are the out-of-sample test
+    exits: dict[str, ExitRule] = {}     # extra exit styles, e.g. stop + trailing MA, on the same entries
+    winners: WinnersConfig = WinnersConfig()
+
+    @field_validator("exits")
+    @classmethod
+    def _exit_names(cls, v: dict[str, ExitRule]) -> dict[str, ExitRule]:
+        for name in v:
+            if name.isdigit():
+                raise ValueError(f"exit name '{name}' must not be a number (numbers are holding periods)")
+        return v
 
 
 class Profile(BaseModel):

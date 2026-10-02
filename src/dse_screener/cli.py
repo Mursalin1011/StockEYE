@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from . import backtest, daily, engine, fundamentals, ingest, quality, report, rules
+from . import backtest, casestudy, daily, engine, fundamentals, ingest, quality, report, rules
 from .config import CONFIG_DIR, Profile, list_profiles, load_profile, load_settings, save_secret
 from .universes import universe_codes
 from .notify import TelegramNotifier, find_chat_ids
@@ -81,6 +81,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--set", action="append", default=[], metavar="PATH=VALUE")
     p.add_argument("--min-trades", type=int, default=15, help="ignore combinations with fewer in-sample trades")
     p.add_argument("--top", type=int, default=15)
+
+    p = sub.add_parser("casestudy", help="every signal on one stock over a period, with outcomes")
+    p.add_argument("code", help="any stock code, e.g. PTL (doesn't need to pass the quality filter)")
+    p.add_argument("--from", dest="start", type=_parse_date, help="default: one year before the last stored day")
+    p.add_argument("--to", dest="end", type=_parse_date, help="default: last stored day")
+    p.add_argument("--profile", action="append", help="profile name (repeatable); default: all profiles")
+    p.add_argument("--shortlist", action="store_true",
+                   help="also run each profile's backtest to show the stock's actual shortlist rank (slower)")
+    p.add_argument("--csv", type=Path, help="write the signals to this CSV file")
 
     p = sub.add_parser("api", help="start the API for the web dashboard (127.0.0.1 only)")
     p.add_argument("--port", type=int, default=8000)
@@ -315,13 +324,23 @@ def _backtest_inputs(db, settings, profile):
             db.load_corporate_actions(codes))
 
 
-def _fmt_summary(df: pd.DataFrame) -> str:
+def _fmt_summary(df: pd.DataFrame, days: bool = False) -> str:
     cols = {"trades": "trades", "median_ret": "median%", "mean_ret": "mean%", "hit_rate": "hit%",
-            "median_bench": "bench%", "median_excess": "vs bench (median)", "mean_excess": "vs bench (mean)",
+            "avg_win": "avg win%", "avg_loss": "avg loss%", "profit_factor": "PF",
+            "median_excess": "vs bench (median)", "mean_excess": "vs bench (mean)",
             "beat_bench": "beat%", "worst": "worst%", "best": "best%"}
+    if days:
+        cols["median_days"] = "days"
     out = df[list(cols)].rename(columns=cols)
-    with pd.option_context("display.width", 200, "display.float_format", "{:,.1f}".format):
+    with pd.option_context("display.width", 250, "display.float_format", "{:,.1f}".format):
         return out.to_string()
+
+
+def _fmt_recall(df: pd.DataFrame) -> str:
+    cols = {"moves": "moves", "caught": "caught", "recall_pct": "recall%", "signals": "signals",
+            "signals_per_catch": "signals/catch", "median_days_after_start": "days after start (median)"}
+    with pd.option_context("display.width", 200, "display.float_format", "{:,.1f}".format):
+        return df[list(cols)].rename(columns=cols).to_string()
 
 
 def cmd_backtest(args, settings, db) -> int:
@@ -334,8 +353,17 @@ def cmd_backtest(args, settings, db) -> int:
     if res.in_sample_until is not None:
         print(f"    in-sample (tuning) up to {res.in_sample_until:%Y-%m-%d}; later = out-of-sample test")
     for h in res.horizons:
-        print(f"\n--- holding {h} trading days (returns net of costs, %)")
+        print(f"\n--- holding {h} trading days (returns net of costs, %; PF = profit factor, gross win / gross loss)")
         print(_fmt_summary(backtest.summarize(res, h)))
+    for name, rule in res.exits.items():
+        n_open = int((res.trades[f"why_{name}"] == "open").sum())
+        print(f"\n--- exit '{name}': {backtest.exit_label(name, rule)} (same entries; days = trading days held"
+              + (f"; {n_open} still open, left out" if n_open else "") + ")")
+        print(_fmt_summary(backtest.summarize(res, name), days=True))
+    w = res.winners_cfg
+    print(f"\n--- recall: big moves (close +{w.min_gain_pct:g}% within {w.within_days} days) in quality stocks, "
+          f"caught {w.before_days} days before to {w.after_days} after the start at <= +{w.max_entry_premium_pct:g}%")
+    print(_fmt_recall(backtest.recall(res)))
     if args.trades:
         h = res.primary
         cols = ["date", "code", "rank", "final_score", "strategies", f"ret_{h}", f"bench_{h}", f"excess_{h}"]
@@ -344,7 +372,7 @@ def cmd_backtest(args, settings, db) -> int:
     if args.csv:
         res.trades.to_csv(args.csv, index=False, float_format="%.2f")
         print(f"\nWrote {len(res.trades)} trades to {args.csv}")
-    print("\nCaveats: today's fundamentals and today's DS30 list are applied to the past "
+    print("\nCaveats: today's fundamentals and today's universe are applied to the past "
           "(look-ahead and survivorship bias). Treat small samples with care.")
     return 0
 
@@ -380,6 +408,76 @@ def cmd_tune(args, settings, db) -> int:
     if dropped:
         print(f"({dropped} combinations had fewer than {args.min_trades} in-sample trades and are hidden)")
     return 0
+
+
+def cmd_casestudy(args, settings, db) -> int:
+    code = args.code.upper()
+    g = engine.load_adjusted_prices(db, settings, [code])
+    if g.empty:
+        raise SystemExit(f"No prices stored for {code}")
+    last = g["date"].max()
+    start = pd.Timestamp(args.start) if args.start else last - pd.DateOffset(years=1)
+    metrics = quality.compute_quality_metrics(db, [code])
+    actions = db.load_corporate_actions([code])
+    frames = []
+    for name in args.profile or list_profiles(settings):
+        profile = load_profile(name)
+        picks = None
+        if args.shortlist:
+            print(f"Running the {name} backtest for shortlist ranks...")
+            picks = backtest.run_backtest(profile, *_backtest_inputs(db, settings, profile)).picks
+        cs = casestudy.run_casestudy(profile, g, metrics, actions, start, args.end, picks)
+        _print_casestudy(cs, shortlist=args.shortlist)
+        frames.append(cs.signals.assign(profile=name))
+    if args.csv:
+        out = pd.concat(frames, ignore_index=True)
+        out.to_csv(args.csv, index=False, float_format="%.2f")
+        print(f"\nWrote {len(out)} signals to {args.csv}")
+    return 0
+
+
+def _print_casestudy(cs: casestudy.CaseStudy, shortlist: bool) -> None:
+    w = cs.window
+    print(f"\n=== {cs.code}: {cs.profile} profile, {cs.start:%Y-%m-%d} .. {cs.end:%Y-%m-%d}")
+    print(f"Close {w['first_close']:.1f} -> {w['last_close']:.1f} ({w['change_pct']:+.1f}%); "
+          f"low {w['low']:.1f} ({w['low_date']:%d %b %Y}), high {w['high']:.1f} ({w['high_date']:%d %b %Y}). "
+          f"Last stored close {cs.last_close:.1f} on {cs.last_date:%Y-%m-%d}.")
+    print("Quality filter today: " + ("passes" if cs.quality_passed else "FAILS (" + "; ".join(cs.quality_failures) + ")"
+                                       + " -> the screen would not show it"))
+    if cs.signals.empty:
+        print("No signals in this period.")
+    else:
+        s = cs.signals
+        exit_cols = [f"ret_{n}" for n in cs.exits]
+        table = pd.DataFrame({
+            "date": s["date"].dt.strftime("%Y-%m-%d"),
+            "strategy": s["strategy"] + s["role"].map({"primary": "", "confirm": " (confirm)"}),
+            "status": s.apply(lambda r: r["status"] if r["status"] == "signal" else "blocked: " + "; ".join(r["blocked_by"]), axis=1),
+            "days": s["days_on"],
+            "score": s["best_score"],
+            "shortlisted": s["cut_date"].map(lambda d: "" if pd.isna(d) else f"{d:%d %b}"),
+        })
+        if shortlist:
+            table["rank"] = s["shortlist_rank"].map(lambda v: "" if pd.isna(v) else f"#{int(v)}")
+        table["entry"] = s["entry"]
+        for h in cs.horizons:
+            table[f"{h}d%"] = s[f"ret_{h}"]
+        table[f"best {cs.primary}d%"], table[f"worst {cs.primary}d%"] = s["best"], s["worst"]
+        for n, col in zip(cs.exits, exit_cols):
+            table[f"{n}%"] = s[col]
+            table[f"{n} exit"] = s[f"why_{n}"].fillna("") + " " + s[f"days_{n}"].map(lambda v: "" if pd.isna(v) else f"{int(v)}d")
+        table["to last%"] = s["to_last"]
+        print(f"\nSignals (first day of each run; days = run length; score = the stock's best ranking score in the run; "
+              f"shortlisted = first day it scored >= {cs.min_score:g}"
+              + ("; rank = best rank among all stocks" if shortlist else "")
+              + f"; entry = next open; returns net of {cs.cost_pct:g}% cost):")
+        with pd.option_context("display.width", 260, "display.max_rows", 500, "display.float_format", "{:,.1f}".format):
+            print(table.to_string(index=False))
+    if len(cs.moves):
+        print("\nBig moves starting in this period:")
+        for m in cs.moves.itertuples():
+            print(f"  {m.date:%Y-%m-%d} at {m.start:.1f} -> peak {m.peak_date:%Y-%m-%d} (+{m.peak_gain_pct:.0f}%): "
+                  + ("caught early by " + ", ".join(m.caught_by) if m.caught_by else "not caught early"))
 
 
 def cmd_api(args, settings, db) -> int:
@@ -459,6 +557,7 @@ COMMANDS = {
     "api": cmd_api,
     "backtest": cmd_backtest,
     "tune": cmd_tune,
+    "casestudy": cmd_casestudy,
     "telegram-setup": cmd_telegram_setup,
     "telegram-test": cmd_telegram_test,
     "status": cmd_status,

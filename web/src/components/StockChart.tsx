@@ -92,6 +92,8 @@ export function StockChart({ data, height = 680 }: { data: ChartData; height?: n
       const markers: SeriesMarker<Time>[] = [
         ...data.markers.map((m) => ({
           time: m.time as Time, position: "belowBar" as const, color: c.slot(m.strategy), shape: SHAPE[m.strategy] ?? "circle",
+          // same shape and colour family as a first breakout, labelled so the two stay distinguishable
+          ...(m.strategy === "second_breakout" ? { text: "2nd" } : {}),
         })),
         ...data.ex_dates.map((d) => ({ time: d as Time, position: "aboveBar" as const, color: c.muted, shape: "square" as const, text: "Ex", size: 0.6 })),
       ].sort((a, b) => String(a.time).localeCompare(String(b.time)));
@@ -157,6 +159,7 @@ export function StockChart({ data, height = 680 }: { data: ChartData; height?: n
       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
         <span><span style={{ color: "var(--s1)" }}>●</span> Quiet accumulation</span>
         <span><span style={{ color: "var(--s2)" }}>▲</span> Base breakout</span>
+        <span><span style={{ color: "var(--s2)" }}>▲ 2nd</span> Second breakout</span>
         <span><span style={{ color: "var(--s3)" }}>■</span> Big hands</span>
         <span><span className="text-muted">■ Ex</span> dividend/bonus ex-date</span>
         <span>Panes: price · volume (line = 20-day avg) · RSI 14 (dashed 70/30) · MACD 12/26/9 (blue) with signal (orange)</span>

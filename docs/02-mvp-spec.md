@@ -185,7 +185,7 @@ signal count. Floor-price periods are excluded. Tuning uses early data, and resu
 | M3 ✅ | Strategy engine | Plugin interface, 3 strategies, quality filter, ranking (confluence, boosts, record-date penalty), reasons, runs saved to DB | Done 2026-10-01: `screen` gives a ranked, explained list for any date; no-lookahead verified by test |
 | M4 🔄 | Delivery | `daily` job (wait → retry → refresh news → screen → send), Telegram with recent news per pick, Task Scheduler script. Email deferred. | Built 2026-10-01; done when the summary arrives by 15:15 on 5 trading days in a row |
 | M5 ✅ | Dashboard | **Next.js 16** (`web/`) over a FastAPI JSON API (`api` command), both localhost-only: Picks, Stocks, Stock page (candles + signal markers + ex-dates, volume, RSI, MACD), History, Quality, Backtest, Settings. Replaced the first Streamlit version. | Built 2026-10-01. "≤ 15 min review" to be confirmed by you |
-| M6 🔄 | Backtest + tuning | `backtest` / `tune` commands and Backtest page: next-day entry, 1% costs, quality-basket benchmark, non-overlapping trades, in/out-of-sample split; verified identical to the live screen on 6 real dates | Built 2026-10-01; tuning shows no robust edge yet (see below) |
+| M6 🔄 | Backtest + tuning | `backtest` / `tune` commands and Backtest page: next-day entry, 1% costs, quality-basket benchmark, non-overlapping trades, in/out-of-sample split; verified identical to the live screen on 6 real dates | Built 2026-10-01; 2026-10-02 added profit factor, exit styles, recall and `casestudy` (docs/05 W1/W2). Position meets the return criteria in both periods; swing only in 2026 |
 
 ## 9. Decisions log
 

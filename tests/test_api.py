@@ -48,3 +48,16 @@ def test_unknown_things_are_404():
 def test_quality_view():
     q = client.get("/api/quality/swing").json()
     assert q["rows"] and "category" in q["rules"]
+
+
+def test_casestudy_reproduces_the_ptl_case():
+    """docs/05: swing base breakout on 24 Feb 2026, entry 53.7 (25 Feb open), shortlisted 25 Feb at score 82."""
+    cs = client.get("/api/casestudy/PTL?profile=swing&start=2025-11-01&end=2026-10-01").json()
+    bb = [s for s in cs["signals"] if s["strategy"] == "base_breakout" and s["status"] == "signal"]
+    feb = next(s for s in bb if s["date"] == "2026-02-24")
+    assert feb["entry"] == pytest.approx(53.7, abs=0.05)
+    assert feb["cut_date"] == "2026-02-25" and feb["best_score"] == pytest.approx(82.4, abs=0.1)
+    times = {b["time"] for b in cs["chart"]["bars"]}
+    assert cs["chart"]["markers"] and all(m["time"] in times for m in cs["chart"]["markers"])
+    assert cs["quality_passed"] is True
+    assert client.get("/api/casestudy/NOPE").status_code == 404

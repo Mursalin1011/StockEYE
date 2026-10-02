@@ -14,7 +14,7 @@ import pandas as pd
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
 
-from .. import backtest, engine, indicators, quality, report, rules
+from .. import backtest, casestudy, engine, indicators, quality, report, rules
 from ..config import CONFIG_DIR, list_profiles, load_profile, load_settings
 from ..universes import universe_codes as resolve_universe
 from ..db import Database
@@ -211,10 +211,6 @@ def chart(code: str, profile: str = "swing", days: int = Query(250, ge=20, le=50
     g = p[p["code"] == code].sort_values("date").reset_index(drop=True)
     if g.empty:
         raise HTTPException(404, f"No prices for {code}")
-    close = g["close"]
-    ind = pd.DataFrame({"date": g["date"], "rsi": indicators.rsi(close),
-                        "vol_avg": indicators.sma(g["volume"].astype(float), 20)}).join(indicators.macd(close))
-
     markers = []
     for strat, _cfg in engine.build_strategies(prof):
         if len(g) < strat.min_history:
@@ -226,19 +222,28 @@ def chart(code: str, profile: str = "swing", days: int = Query(250, ge=20, le=50
             markers.append({"time": g.at[i, "date"].strftime("%Y-%m-%d"), "strategy": strat.name,
                             "title": strat.title, "score": round(float(out.at[i, "score"]), 1)})
 
-    start = max(len(g) - days, 0)
-    g, ind = g.iloc[start:], ind.iloc[start:]
-    first_day = g["date"].iloc[0].strftime("%Y-%m-%d")
+    return _chart_payload(db, code, profile, g, markers, max(len(g) - days, 0))
+
+
+def _chart_payload(db: Database, code: str, profile: str, g: pd.DataFrame, markers: list[dict], start: int,
+                   end: int | None = None) -> dict:
+    """Bars, indicators (computed on full history, then sliced to rows start..end), markers, ex-dates."""
+    close = g["close"]
+    ind = pd.DataFrame({"date": g["date"], "rsi": indicators.rsi(close),
+                        "vol_avg": indicators.sma(g["volume"].astype(float), 20)}).join(indicators.macd(close))
+    g, ind = g.iloc[start:end], ind.iloc[start:end]
+    first_day, last_day = g["date"].iloc[0], g["date"].iloc[-1]
     bars = g[["date", "open", "high", "low", "close", "volume"]].copy()
     for col in ("open", "high", "low"):          # no-trade days: flat bar at the carried close
         bars[col] = bars[col].fillna(bars["close"])
     acts = db.load_corporate_actions([code])
-    ex = [d.strftime("%Y-%m-%d") for d in acts["ex_date"].dropna() if d >= g["date"].iloc[0]]
+    ex = [d.strftime("%Y-%m-%d") for d in acts["ex_date"].dropna() if first_day <= d <= last_day]
+    lo, hi = first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
     return {
         "code": code, "profile": profile,
         "bars": records(bars.rename(columns={"date": "time"})),
         "indicators": records(ind.rename(columns={"date": "time"})),
-        "markers": [mk for mk in markers if mk["time"] >= first_day],
+        "markers": [mk for mk in markers if lo <= mk["time"] <= hi],
         "ex_dates": ex,
     }
 
@@ -268,25 +273,82 @@ def profiles():
     return out
 
 
-@app.get("/api/backtest/{profile}")
-def backtest_view(profile: str, db: Database = Depends(get_db)):
-    """Backtest summary per holding period (cached until data or the profile file changes)."""
-    prof = _profile(profile)
-    mtime = (CONFIG_DIR / "profiles" / f"{profile}.yaml").stat().st_mtime
+def _backtest_result(name: str, db: Database) -> backtest.BacktestResult:
+    """Cached until the data or the profile file changes."""
+    prof = _profile(name)
+    mtime = (CONFIG_DIR / "profiles" / f"{name}.yaml").stat().st_mtime
 
     def run():
         codes = resolve_universe(prof.universe, db)
-        res = backtest.run_backtest(prof, adjusted_prices(db), quality_metrics(db), db.load_corporate_actions(codes))
-        summaries = {str(h): records(backtest.summarize(res, h).reset_index()) for h in res.horizons}
-        return {
-            "profile": profile, "start": res.start.strftime("%Y-%m-%d"), "end": res.end.strftime("%Y-%m-%d"),
-            "in_sample_until": res.in_sample_until.strftime("%Y-%m-%d") if res.in_sample_until is not None else None,
-            "cost_pct": prof.backtest.cost_pct, "primary_horizon": res.primary, "horizons": res.horizons,
-            "universe_size": len(res.universe), "summary": summaries,
-            "trades": records(res.trades.sort_values("date", ascending=False)),
-        }
+        return backtest.run_backtest(prof, adjusted_prices(db), quality_metrics(db), db.load_corporate_actions(codes))
 
-    return cached(("backtest", profile, mtime, _data_version(db)), 3600, run)
+    return cached(("backtest", name, mtime, _data_version(db)), 3600, run)
+
+
+@app.get("/api/backtest/{profile}")
+def backtest_view(profile: str, db: Database = Depends(get_db)):
+    """Summary per holding period and exit style, recall on big winners, recent trades."""
+    prof = _profile(profile)
+    res = _backtest_result(profile, db)
+    w = res.winners_cfg
+    trades = res.trades.drop(columns=["i"]).sort_values("date", ascending=False)
+    return {
+        "profile": profile, "start": res.start.strftime("%Y-%m-%d"), "end": res.end.strftime("%Y-%m-%d"),
+        "in_sample_until": res.in_sample_until.strftime("%Y-%m-%d") if res.in_sample_until is not None else None,
+        "cost_pct": prof.backtest.cost_pct, "primary_horizon": res.primary, "horizons": res.horizons,
+        "exits": [{"name": n, "label": backtest.exit_label(n, r), "open": int((res.trades[f"why_{n}"] == "open").sum())}
+                  for n, r in res.exits.items()],
+        "universe_size": len(res.universe),
+        "summary": {str(k): records(backtest.summarize(res, k).reset_index()) for k in res.keys},
+        "recall": records(backtest.recall(res).reset_index()),
+        "winners": w.model_dump(),
+        "trades": records(trades),
+    }
+
+
+@app.get("/api/casestudy/{code}")
+def casestudy_view(code: str, profile: str = "swing", start: date | None = None, end: date | None = None,
+                   shortlist: bool = False, db: Database = Depends(get_db)):
+    """Every signal of one profile on any stock over a period, with outcomes, big moves and a chart.
+
+    shortlist=true also runs (or reuses) the profile's backtest to show the stock's rank among all stocks.
+    """
+    prof = _profile(profile)
+    code = code.upper()
+    g = engine.load_adjusted_prices(db, settings, [code]).sort_values("date").reset_index(drop=True)
+    if g.empty:
+        raise HTTPException(404, f"No prices for {code}")
+    last = g["date"].iloc[-1]
+    start_ts = pd.Timestamp(start) if start else last - pd.DateOffset(years=1)
+    m = quality_metrics(db)
+    metrics = m.loc[[code]] if code in m.index else quality.compute_quality_metrics(db, [code])
+    picks = _backtest_result(profile, db).picks if shortlist else None
+    try:
+        cs = casestudy.run_casestudy(prof, g, metrics, db.load_corporate_actions([code]), start_ts, end, picks)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+
+    sig = cs.signals
+    markers = [{"time": r.date.strftime("%Y-%m-%d"), "strategy": r.strategy, "title": r.title,
+                "score": round(r.score, 1)} for r in sig.itertuples() if r.status == "signal"] if len(sig) else []
+    # Chart: the window plus 60 trading days before it, so the base before the first signal is visible
+    rows = g.index[(g["date"] >= cs.start) & (g["date"] <= cs.end)]
+    chart_data = _chart_payload(db, code, profile, g, markers, max(int(rows[0]) - 60, 0), int(rows[-1]) + 1)
+    comp = db.load_companies([code])
+    w = cs.window
+    return {
+        "code": code, "profile": profile, "name": comp["name"].iloc[0] if len(comp) else None,
+        "start": cs.start.strftime("%Y-%m-%d"), "end": cs.end.strftime("%Y-%m-%d"),
+        "last_date": cs.last_date.strftime("%Y-%m-%d"), "last_close": cs.last_close,
+        "window": {**w, "low_date": w["low_date"].strftime("%Y-%m-%d"), "high_date": w["high_date"].strftime("%Y-%m-%d")},
+        "quality_passed": cs.quality_passed, "quality_failures": cs.quality_failures,
+        "horizons": cs.horizons, "primary_horizon": cs.primary, "cost_pct": cs.cost_pct, "min_score": cs.min_score,
+        "exits": [{"name": n, "label": backtest.exit_label(n, prof.backtest.exits[n])} for n in cs.exits],
+        "shortlist": shortlist,
+        "signals": records(sig) if len(sig) else [],
+        "moves": records(cs.moves),
+        "chart": chart_data,
+    }
 
 
 @app.get("/api/config/raw")

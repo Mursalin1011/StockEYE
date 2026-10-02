@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { StockChart } from "@/components/StockChart";
 import { Table, Td, Th } from "@/components/Table";
 import { Badge, Card, LinkTabs, PageTitle, Stat } from "@/components/ui";
@@ -57,7 +58,12 @@ export default async function StockPage(props: PageProps<"/stocks/[code]">) {
             Signals from
             <LinkTabs items={meta.profiles.map((p) => ({ value: p.name, label: p.name }))} active={profile} hrefFor={(v) => href({ profile: v })} />
           </div>
-          <LinkTabs items={RANGES} active={days} hrefFor={(v) => href({ days: v })} />
+          <div className="flex items-center gap-3">
+            <Link className="text-sm underline" href={`/casestudy?${new URLSearchParams({ code, profile })}`}>
+              Case study →
+            </Link>
+            <LinkTabs items={RANGES} active={days} hrefFor={(v) => href({ days: v })} />
+          </div>
         </div>
         <StockChart data={chart} />
         <p className="mt-2 text-xs text-muted">
