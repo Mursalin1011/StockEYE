@@ -135,3 +135,66 @@ def test_big_hands_fires_when_trades_get_larger():
 def test_params_typo_fails_loudly():
     with pytest.raises(Exception):
         QuietAccumulation({"min_volume_ratoi": 2})
+
+
+# --- base breakout v2 (W5): dry-up and follow-through ------------------------
+
+def _dryup_breakout(before_vol):
+    """60 days at volume 100k, then 10 days at `before_vol`, a 4x breakout and two more closes above."""
+    close = np.r_[flat(70), 105.0, 106.0, 106.5]
+    vol = np.r_[np.full(60, 100_000), np.full(10, before_vol), 400_000, 150_000, 150_000]
+    return make_df(close, vol)
+
+
+def test_dryup_filter_keeps_only_breakouts_after_quiet_volume():
+    params = {"base_days": 40, "max_dryup_ratio": 0.8, "dryup_days": 10, "dryup_baseline_days": 50, "min_volume_x": 2}
+    quiet = BaseBreakout(params).compute(_dryup_breakout(50_000))
+    busy = BaseBreakout(params).compute(_dryup_breakout(150_000))
+    assert quiet.iloc[70]["signal"] and quiet.iloc[70]["dryup_ratio"] == pytest.approx(0.5)
+    assert not busy["signal"].any()
+    # off by default: the busy one fires too
+    assert BaseBreakout({"base_days": 40}).compute(_dryup_breakout(150_000)).iloc[70]["signal"]
+
+
+def test_follow_through_delays_the_signal_until_confirmed():
+    out = BaseBreakout({"base_days": 40, "follow_through_days": 3, "follow_through_closes": 2}).compute(
+        _dryup_breakout(100_000))
+    assert not out.iloc[70]["signal"] and not out.iloc[71]["signal"]   # breakout day, first close above
+    row = out.iloc[72]                                                  # second close above: confirmed
+    assert row["signal"] and row["days_since"] == 0 and row["lag"] == 2
+    assert "Confirmed" in BaseBreakout({"follow_through_days": 3}).reasons(row)[-1]
+
+
+def test_follow_through_rejects_a_breakout_that_falls_back():
+    close = np.r_[flat(70), 105.0, 99.0, 99.5, 100.0]
+    vol = np.r_[np.full(70, 100_000), 400_000, 150_000, 150_000, 150_000]
+    assert not BaseBreakout({"base_days": 40, "follow_through_days": 3}).compute(make_df(close, vol))["signal"].any()
+
+
+def test_v2_options_off_reproduce_the_original_breakout():
+    """With dry-up and follow-through off, signals, days_since and scores equal the pre-W5 logic."""
+    from dse_screener.strategies.base_breakout import breakout_days
+
+    rng = np.random.default_rng(7)
+    close, vol, level = [], [], 100.0
+    for _ in range(8):                                   # 8 cycles: quiet base, then a jump on volume
+        close += list(level + rng.normal(0, 0.5, 30))
+        vol += list(rng.lognormal(11, 0.3, 30))
+        level *= 1.06
+        close += [level, level * 1.01, level * 0.97]
+        vol += [vol[-1] * 4, vol[-1] * 2, vol[-1]]
+    df = make_df(close, vol)
+    p = {"base_days": 25, "max_base_range_pct": 10, "max_days_since": 2}
+    new = BaseBreakout(p).compute(df)
+    b = breakout_days(df, 25, 10, 1.0, 2.0)
+    pp = BaseBreakout(p).p
+    day_score = (50 * np.clip((b["volume_x"] - 2) / 3, 0, 1) + 30 * (1 - np.clip((b["base_range_pct"] - 5) / 5, 0, 1))
+                 + 20 * np.clip((b["breakout_pct"] - 1) / 4, 0, 1))
+    sig, since, score = pd.Series(False, index=df.index), pd.Series(np.nan, index=df.index), pd.Series(0.0, index=df.index)
+    for k in range(2, -1, -1):
+        hit = b["is_breakout"].shift(k, fill_value=False) & (df["close"] >= b["base_high"].shift(k))
+        sig[hit], since[hit] = True, k
+        score[hit] = (day_score.shift(k)[hit] - pp.recency_penalty * k).clip(lower=0)
+    assert sig.sum() >= 8
+    assert (new["signal"] == sig).all()
+    assert np.allclose(new.loc[sig, "days_since"], since[sig]) and np.allclose(new.loc[sig, "score"], score[sig])

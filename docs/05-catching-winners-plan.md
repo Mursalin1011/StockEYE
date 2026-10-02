@@ -84,7 +84,7 @@ What this says:
 | **W2** ✅ | **Backtest metrics**: mean, profit factor, avg win/loss, recall on big winners; exit modes (fixed / stop + trailing MA / time stop) | Median-only reporting hides positive-skew strategies | Summary shows both views; this doc's numbers reproduced |
 | **W3** | **All-equities universe** with fundamentals for every company (one-time ~25 min, then weekly) and instrument type from DSE (not name rules); dividend/bonus adjustment for all | PTL-type misses; quality matters most outside DS30 | Daily screen of ~300 quality-passing equities within the 3pm job |
 | **W4** ✅ | **Re-entry after a shakeout**: if a breakout fails (stop or close back in the base) but the stock **re-breaks the base high on ≥ 2× volume within 40 days**, signal again with a "second breakout" reason | PTL's real move started at the second breakout | Backtest: more winners captured per false alarm |
-| **W5** | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
+| **W5** ✅ (tested, not adopted) | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
 | **W6** | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
 | **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
 | **W8** | **Holdings tracker**: mark "bought PTL @ 53.7" (dashboard or Telegram), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
@@ -143,6 +143,48 @@ Against the acceptance criteria (section 4):
 - **Exits:** stop + MA20 smooths swing's 2025 (PF 1.1 → 1.4) at no cost overall, but doesn't change the verdict.
   Slower trailing exits (MA50 / MA100) are worse for both profiles: DSE run-ups pull back hard. Fixed holds stay the default.
 - 2026 has few complete big moves yet (6), so its recall is not meaningful.
+
+### W5: base breakout v2, 2026-10-02 (tested, not adopted)
+New `base_breakout` options, all off by default (signals unchanged; a regression test checks this):
+`max_dryup_ratio` (10-day volume before the breakout vs the 50 days before that), `follow_through_days` /
+`follow_through_closes` (signal on the day the breakout is confirmed by closes above the base high), and
+longer `base_days`. Quality stocks, 2 years, net of 1%, "vs bkt" = mean excess over the same-day quality basket.
+
+**Swing (20-day hold)**
+
+| Variant | Every signal: n | Hit % | PF | vs bkt 2025 / 2026 | Breakout recall | Shortlist vs bkt 2025 / 2026 | Shortlist PF 2025 / 2026 | Shortlist recall |
+|---|---|---|---|---|---|---|---|---|
+| **current (25d base, 10%)** | 249 | 46 | 1.3 | −0.3 / +1.6 | 38% | **−0.1 / +1.3** | 1.1 / 2.1 | **46%** |
+| dry-up ≤ 0.8 | 79 | 54 | 1.9 | −0.5 / +1.3 | 19% | −0.2 / +0.7 | 1.1 / 2.3 | 40% |
+| dry-up ≤ 0.6 | 40 | 48 | 1.4 | −1.5 / +0.6 | 15% | −0.3 / +0.4 | 1.0 / 2.2 | 37% |
+| 40d base, 12% | 131 | 46 | 1.3 | −1.4 / +2.2 | 23% | −0.3 / +1.4 | 0.9 / 3.1 | 35% |
+| 60d base, 15% | 92 | 41 | 1.1 | −1.3 / +1.0 | 12% | −0.2 / +0.8 | 1.0 / 2.3 | 31% |
+| follow-through 2 of 3 | 186 | 45 | 1.1 | −0.3 / +0.8 | 31% | −0.4 / +0.9 | 0.9 / 2.2 | 40% |
+| follow-through 1 of 2 | 217 | 46 | 1.3 | −0.2 / +1.8 | 35% | −0.3 / +1.6 | 1.0 / 2.3 | 44% |
+| dry-up 0.8 + FT 2/3 | 61 | 57 | 2.1 | **+1.2 / +1.0** | 13% | −0.2 / +0.8 | 1.0 / 2.6 | 38% |
+
+**Position (60-day hold)**
+
+| Variant | Every signal: n | PF | vs bkt 2025 / 2026 | Shortlist vs bkt 2025 / 2026 | Shortlist PF 2025 / 2026 | Shortlist recall |
+|---|---|---|---|---|---|---|
+| **current (60d base, 15%)** | 147 | 1.6 | +2.2 / +0.9 | **+2.3 / +1.7** | 2.3 / 1.7 | 18% |
+| dry-up ≤ 0.8 | 14 | 2.3 | +1.7 / −3.7 | +0.6 / +2.4 | 2.4 / 2.2 | 9% |
+| 40d base, 12% | 203 | 1.7 | +1.3 / +0.9 | −0.2 / +1.3 | 1.7 / 1.5 | 29% |
+| 90d base, 20% | 123 | 1.2 | −0.2 / +0.4 | +0.6 / +1.3 | 1.9 / 1.8 | 12% |
+| follow-through 2 of 3 | 128 | 1.2 | +1.5 / +0.4 | +1.3 / +0.8 | 1.9 / 1.6 | 18% |
+
+What it says:
+- **Volume dry-up raises raw returns but not returns vs the basket** (swing: hit rate 46% → 54%, PF 1.3 → 1.9,
+  but mean vs basket 0.8 → 0.5). Quiet-volume breakouts cluster when the whole market is about to rise: market
+  timing, not stock picking. And it halves recall. PTL-style dry-up bases are real but rare.
+- **Follow-through hurts on DSE**: waiting for confirmation enters later and higher, and failed breakouts are
+  already handled better by `second_breakout` (re-entry after the shakeout).
+- **Longer bases** help 2026 and hurt 2025 for swing; for position, 40-day bases nearly double recall but
+  fail 2025 vs the basket.
+- **dry-up + follow-through (swing)** is the only variant positive vs the basket in both years per signal
+  (+1.2 / +1.0, PF 2.1, n = 61), but on the shortlist it does worse than the current setup. Worth re-testing
+  as a separate "confirmed breakout" strategy once there is another year of data.
+- **Decision: no change.** The options stay available (and tested) for experiments with `backtest --set`.
 
 ### W1: case-study tool, 2026-10-02
 `python -m dse_screener casestudy PTL --from 2025-11-01 [--profile swing] [--shortlist] [--csv out.csv]` and the

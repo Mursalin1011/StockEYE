@@ -20,6 +20,15 @@ class Params(StrategyParams):
     tight_base_pct: float = 5.0
     strong_breakout_pct: float = 5.0
     recency_penalty: float = 5.0        # score points lost per day since the breakout
+    # Optional (W5). Volume dry-up: in the `dryup_days` before the breakout, average volume must be at most
+    # `max_dryup_ratio` x the `dryup_baseline_days` before that (sellers exhausted, like PTL's base). None = off.
+    max_dryup_ratio: float | None = None
+    dryup_days: int = 10
+    dryup_baseline_days: int = 50
+    # Optional (W5). Follow-through: signal only once the close has stayed above the old base high on
+    # `follow_through_closes` of the `follow_through_days` days after the breakout. 0 = off (signal on the day).
+    follow_through_days: int = 0
+    follow_through_closes: int = 2
 
 
 def breakout_days(df: pd.DataFrame, base_days: int, max_base_range_pct: float,
@@ -48,42 +57,72 @@ class BaseBreakout(Strategy):
 
     @property
     def min_history(self) -> int:
-        return self.p.base_days + 1
+        dryup = self.p.dryup_days + self.p.dryup_baseline_days if self.p.max_dryup_ratio is not None else 0
+        return max(self.p.base_days, dryup) + 1
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         p = self.p
         close = df["close"]
+        vol = df["volume"].fillna(0).astype(float)
         b = breakout_days(df, p.base_days, p.max_base_range_pct, p.min_breakout_pct, p.min_volume_x)
-        base_high, base_range, volume_x, breakout_pct, is_breakout = (
-            b["base_high"], b["base_range_pct"], b["volume_x"], b["breakout_pct"], b["is_breakout"]
+        b["dryup_ratio"] = (vol.shift(1).rolling(p.dryup_days).mean()
+                            / vol.shift(1 + p.dryup_days).rolling(p.dryup_baseline_days).mean())
+        is_breakout = b["is_breakout"]
+        if p.max_dryup_ratio is not None:
+            is_breakout = is_breakout & (b["dryup_ratio"] <= p.max_dryup_ratio)
+        b["day_score"] = (
+            50 * scale(b["volume_x"], p.min_volume_x, p.strong_volume_x)
+            + 30 * (1 - scale(b["base_range_pct"], p.tight_base_pct, p.max_base_range_pct))
+            + 20 * scale(b["breakout_pct"], p.min_breakout_pct, p.strong_breakout_pct)
         )
-        day_score = (
-            50 * scale(volume_x, p.min_volume_x, p.strong_volume_x)
-            + 30 * (1 - scale(base_range, p.tight_base_pct, p.max_base_range_pct))
-            + 20 * scale(breakout_pct, p.min_breakout_pct, p.strong_breakout_pct)
-        )
+        stats = ["base_range_pct", "volume_x", "breakout_pct", "base_high", "dryup_ratio", "day_score"]
+
+        # Events: the breakout day itself, or (follow-through on) the day the breakout is confirmed.
+        # Each event carries its breakout's stats; lag = trading days from the breakout to the event.
+        ev = b[stats].where(is_breakout)
+        ev["event"], ev["lag"] = is_breakout, 0.0
+        if p.follow_through_days > 0:
+            ev.loc[:, stats + ["lag"]] = np.nan
+            ev["event"] = False
+            for k in range(p.follow_through_days, 0, -1):      # most recent breakout wins
+                pivot = b["base_high"].shift(k)                 # base high of the breakout k days ago
+                closes_above = [(close.shift(j) > pivot).astype(int) for j in range(k)]   # days t, t-1, ..., t-k+1
+                n_now, n_before = sum(closes_above), sum(closes_above[1:])
+                hit = (is_breakout.shift(k, fill_value=False) & (n_now >= p.follow_through_closes)
+                       & (n_before < p.follow_through_closes))  # the day it is first confirmed
+                ev.loc[hit, "event"] = True
+                ev.loc[hit, "lag"] = k
+                for col in stats:
+                    ev.loc[hit, col] = b[col].shift(k)[hit]
 
         out = pd.DataFrame(index=df.index)
         out["signal"] = False
         out["score"] = 0.0
-        for col in ["days_since", "base_range_pct", "volume_x", "breakout_pct", "base_high"]:
+        shown = ["lag", "base_range_pct", "volume_x", "breakout_pct", "base_high", "dryup_ratio"]
+        for col in ["days_since", *shown]:
             out[col] = np.nan
-        # Most recent breakout wins: fill from k = max_days_since down to 0
+        # Keep showing the signal max_days_since days after the event while the close stays above the old
+        # base high. Most recent event wins: fill from k = max_days_since down to 0
         for k in range(p.max_days_since, -1, -1):
-            hit = is_breakout.shift(k, fill_value=False) & (close >= base_high.shift(k))
+            shifted = ev.shift(k)
+            hit = shifted["event"].fillna(False).astype(bool) & (close >= shifted["base_high"])
             out.loc[hit, "signal"] = True
             out.loc[hit, "days_since"] = k
-            out.loc[hit, "base_range_pct"] = base_range.shift(k)[hit]
-            out.loc[hit, "volume_x"] = volume_x.shift(k)[hit]
-            out.loc[hit, "breakout_pct"] = breakout_pct.shift(k)[hit]
-            out.loc[hit, "base_high"] = base_high.shift(k)[hit]
-            out.loc[hit, "score"] = (day_score.shift(k)[hit] - p.recency_penalty * k).clip(lower=0)
+            for col in shown:
+                out.loc[hit, col] = shifted[col][hit]
+            out.loc[hit, "score"] = (shifted["day_score"][hit] - p.recency_penalty * k).clip(lower=0)
         return out
 
     def reasons(self, row: pd.Series) -> list[str]:
-        when = "today" if row.days_since == 0 else f"{int(row.days_since)} day(s) ago"
-        return [
+        since = int(row.days_since) + (int(row.lag) if pd.notna(row.get("lag")) else 0)
+        when = "today" if since == 0 else f"{since} day(s) ago"
+        out = [
             f"Broke out of a {self.p.base_days}-day base {when} "
             f"(base range {row.base_range_pct:.0f}%, high {row.base_high:.1f})",
             f"Breakout volume {row.volume_x:.1f}x the base average, close {row.breakout_pct:+.1f}% above the base",
         ]
+        if self.p.max_dryup_ratio is not None and pd.notna(row.get("dryup_ratio")):
+            out.append(f"Volume dried up before it: {row.dryup_ratio:.2f}x its earlier average")
+        if self.p.follow_through_days > 0:
+            out.append(f"Confirmed: closed above the base high on {self.p.follow_through_closes} days after the breakout")
+        return out

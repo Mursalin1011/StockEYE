@@ -48,6 +48,10 @@ strategies:
       min_divergence: 3
   base_breakout:
     weight: 1.0
+    # Optional filters (W5, docs/05), off: max_dryup_ratio (volume dry-up before the breakout),
+    # follow_through_days / follow_through_closes (wait for closes above the base high), longer base_days.
+    # 2-year test: none beat this setup in both years; dry-up halves recall and its higher raw returns
+    # don't beat the basket; follow-through enters later and higher; 40-day bases fail 2025 (PF 0.9).
     params:
       base_days: 25
       max_base_range_pct: 10

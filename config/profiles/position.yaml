@@ -44,6 +44,9 @@ strategies:
       min_divergence: 3
   base_breakout:
     weight: 0.8
+    # Optional filters (W5, docs/05), off: max_dryup_ratio, follow_through_days, other base lengths.
+    # 2-year test: this setup stays best (mean vs basket +2.3 / +1.7 in 2025 / 2026); dry-up leaves
+    # 14 signals, 40-day bases raise recall (18% -> 29%) but drop 2025 to -0.2 vs the basket.
     params:
       base_days: 60
       max_base_range_pct: 15
