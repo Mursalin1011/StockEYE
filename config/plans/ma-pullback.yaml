@@ -1,0 +1,28 @@
+# Trade lab plan (docs/06-trade-lab-plan.md): buy a pullback in an uptrend, sell into strength.
+# Conditions are "left op right": a column (features.py: sma_N, rsi_N, high_N, vol_x_N, ...) or a number.
+# Operators: >  <  >=  <=  crosses_above  crosses_below
+name: ma-pullback
+description: Uptrend (close above MA50), RSI dips below 40; sell at +15%, -7% stop, RSI above 70 or 30 days.
+codes: [PTL]
+
+entry:
+  when:
+    - close > sma_50
+    - rsi_14 < 40
+  fill: next_open
+  new_signal_only: true      # one entry per dip, not one every day RSI stays low
+
+exit:
+  stop_pct: 7
+  target_pct: 15
+  when_any:
+    - rsi_14 > 70
+  max_days: 30
+
+hold:
+  min_days: 2
+  cooldown_days: 3
+
+costs: { round_trip_pct: 1.0 }
+capital: { start: 100000, per_trade_pct: 100 }
+in_sample_until: 2025-12-31

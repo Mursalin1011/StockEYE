@@ -4,7 +4,7 @@ A configurable, multi-strategy stock screener for the Dhaka Stock Exchange (DSE)
 daily market data, runs your strategies every trading day, sends an explained shortlist to
 Telegram around 3pm, and has a web dashboard for charts, fundamentals and backtests.
 
-Plans: [product brief](docs/01-product-brief.md) · [MVP spec](docs/02-mvp-spec.md)
+Plans: [product brief](docs/01-product-brief.md) · [MVP spec](docs/02-mvp-spec.md) · [trade lab](docs/06-trade-lab-plan.md)
 
 > Screening output from your own rules. Not investment advice.
 
@@ -76,6 +76,7 @@ All numbers are in YAML, so no code changes are needed:
 | File | What it controls |
 |---|---|
 | `config/profiles/swing.yaml`, `position.yaml` | quality rules, strategy parameters and weights, ranking, backtest settings |
+| `config/plans/*.yaml` | trade lab plans: your own entry/exit rules for `simulate` |
 | `config/settings.yaml` | data sources, the daily job (times, retries), Telegram summary, adjustments |
 | `config/universes/all_equities.yaml` | default universe: every active DSE equity (resolved from stored company pages, so new listings join automatically); `ds30.yaml` is the blue-chip list |
 | `config/secrets.yaml` | Telegram token and chat id (git-ignored, never shown in the dashboard) |
@@ -115,6 +116,18 @@ the fixed holding periods in `backtest.horizons`, any exit styles in `backtest.e
 ```powershell
 .\.venv\Scripts\python.exe -m dse_screener casestudy PTL --from 2025-11-01 [--profile swing] [--shortlist]
 ```
+
+**Test your own rules (trade lab).** `simulate` runs a trade plan (your entry, exit and hold rules) on any
+stock(s) and period: every trade, stats, equity vs buy-and-hold ([docs/06](docs/06-trade-lab-plan.md)).
+Use a saved plan from `config/plans/`, flags, or both (flags win):
+
+```powershell
+.\.venv\Scripts\python.exe -m dse_screener simulate PTL --plan breakout-swing --from 2025-01-01
+.\.venv\Scripts\python.exe -m dse_screener simulate PTL BXPHARMA --when "close > sma_50" --when "rsi_14 < 50" --stop 7 --target 15 --max-days 30
+.\.venv\Scripts\python.exe -m dse_screener simulate PTL --dates 2025-11-13,2026-04-12 --trail-ma 50 --stop 10
+```
+
+`simulate --help` lists every column a condition can use (`sma_N`, `rsi_N`, `high_N`, `vol_x_N`, ...).
 
 ## AI research review
 
@@ -182,6 +195,7 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener backtest --profile swing [--set PATH=VALUE] [--csv trades.csv]
 & $py -m dse_screener tune --profile swing --grid PATH=V1,V2
 & $py -m dse_screener casestudy PTL --from 2025-11-01   # every signal on one stock, with outcomes
+& $py -m dse_screener simulate PTL --plan breakout-swing   # your own entry/exit rules on any stock
 & $py -m dse_screener research add <link> ; research review   # AI review of research PDFs
 & $py -m dse_screener api             # API for the dashboard
 & $py -m pytest                       # tests
@@ -196,11 +210,13 @@ src/dse_screener/
   db.py                    # SQLite storage (raw prices are never modified)
   ingest.py, fundamentals.py, corporate_actions.py, adjust.py
   quality.py, rules.py     # quality metrics and the YAML rule engine
-  indicators.py            # RSI, MACD, moving averages
+  indicators.py            # RSI, MACD, moving averages, ATR
+  features.py              # named columns for trade-plan conditions (sma_50, rsi_14, high_20, ...)
   strategies/              # one file per strategy; register new ones in strategies/__init__.py
   engine.py                # filter -> strategies -> ranking (shared by live screen and backtest)
   backtest.py              # next-day entry, costs, benchmark, non-overlapping trades, exit styles, recall
   casestudy.py             # one stock over a period: every signal, outcome and big move
+  simulate.py              # trade lab: your own entry/exit/hold rules on any stock, trades + equity
   research/                # AI review: documents, StockEYE context, Claude review, prediction ledger
   daily.py, report.py, notify/   # the 3pm job and Telegram
   api/app.py               # FastAPI for the dashboard

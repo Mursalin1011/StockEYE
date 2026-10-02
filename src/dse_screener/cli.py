@@ -12,8 +12,9 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from . import backtest, casestudy, daily, engine, fundamentals, ingest, quality, report, rules
-from .config import CONFIG_DIR, Profile, list_profiles, load_profile, load_settings, save_secret
+from . import backtest, casestudy, daily, engine, features, fundamentals, ingest, quality, report, rules, simulate
+from .config import (CONFIG_DIR, Profile, TradePlan, list_plans, list_profiles, load_profile, load_settings,
+                     read_plan_data, save_secret)
 from .universes import universe_codes
 from .notify import TelegramNotifier, find_chat_ids
 from .notify.telegram import TelegramError
@@ -90,6 +91,44 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--shortlist", action="store_true",
                    help="also run each profile's backtest to show the stock's actual shortlist rank (slower)")
     p.add_argument("--csv", type=Path, help="write the signals to this CSV file")
+
+    p = sub.add_parser("simulate", help="trade lab: test your own entry/exit rules on any stock (docs/06)",
+                       formatter_class=argparse.RawDescriptionHelpFormatter,
+                       epilog="Condition columns (N = any number):\n  " + "\n  ".join(features.known())
+                       + "\nOperators: >  <  >=  <=  crosses_above  crosses_below")
+    p.add_argument("codes", nargs="*", help="stock codes, e.g. PTL (default: the plan's codes)")
+    p.add_argument("--plan", help="saved plan in config/plans (name) or a YAML file; flags override it")
+    p.add_argument("--from", dest="start", type=_parse_date, help="first signal day (default: plan, else all data)")
+    p.add_argument("--to", dest="end", type=_parse_date, help="end of the test (default: plan, else last stored day)")
+    g = p.add_argument_group("entry (any of these replaces the plan's entry)")
+    g.add_argument("--strategy", help="enter on this strategy's signal, e.g. base_breakout")
+    g.add_argument("--profile", help="with --strategy: take its parameters from this profile, e.g. swing")
+    g.add_argument("--when", action="append", metavar='"LEFT OP RIGHT"',
+                   help='entry condition, e.g. "close > sma_50" (repeatable; all must hold)')
+    g.add_argument("--dates", help="buy on these days instead, e.g. 2025-03-12,2025-08-04")
+    g = p.add_argument_group("entry options")
+    g.add_argument("--fill", choices=["next_open", "same_close"])
+    g.add_argument("--every-signal-day", action="store_true",
+                   help="act on every signal day, not just the first day of each setup")
+    g = p.add_argument_group("exit (first to trigger wins)")
+    g.add_argument("--stop", type=float, metavar="PCT", help="stop loss, %% below the entry (intraday low)")
+    g.add_argument("--target", type=float, metavar="PCT", help="profit target, %% above the entry (intraday high)")
+    g.add_argument("--trail-pct", type=float, metavar="PCT", help="close this %% below its highest since entry")
+    g.add_argument("--trail-ma", type=int, metavar="N", help="close below the N-day moving average")
+    g.add_argument("--exit-when", action="append", metavar='"LEFT OP RIGHT"',
+                   help='exit condition at the close, e.g. "rsi_14 > 75" (repeatable; any one)')
+    g.add_argument("--max-days", type=int, help="time limit: trading days after the signal day")
+    g = p.add_argument_group("hold, costs, money")
+    g.add_argument("--min-days", type=int, help="no exit before entry + this many trading days (default 2)")
+    g.add_argument("--cooldown", type=int, help="trading days to wait after an exit (default 0)")
+    g.add_argument("--cost", type=float, metavar="PCT", help="round-trip cost (default 1.0)")
+    g.add_argument("--capital", type=float, help="starting capital (default 100,000)")
+    g.add_argument("--size-pct", type=float, help="%% of equity per trade (default 100)")
+    g.add_argument("--in-sample-until", type=_parse_date, help="split stats into tuning / test periods")
+    p.add_argument("--set", action="append", default=[], metavar="PATH=VALUE",
+                   help="override any plan value, e.g. exit.stop_pct=6 or entry.params.base_days=30")
+    p.add_argument("--csv", type=Path, help="write the trades to this CSV file")
+    p.add_argument("--equity-csv", type=Path, help="write the daily equity curve to this CSV file")
 
     p = sub.add_parser("research", help="research PDFs and the AI review (see config/research/ANALYST.md)")
     rs = p.add_subparsers(dest="research_cmd", required=True)
@@ -459,6 +498,132 @@ def cmd_casestudy(args, settings, db) -> int:
     return 0
 
 
+def _set_path(data: dict, path: str, value) -> None:
+    node = data
+    *parents, leaf = path.strip().split(".")
+    for key in parents:
+        node = node.setdefault(key, {})
+    node[leaf] = value
+
+
+def _plan_from_args(args) -> TradePlan:
+    """The saved plan (if any), then the flags, then --set overrides."""
+    data = read_plan_data(args.plan) if args.plan else {}
+    entry = data.setdefault("entry", {})
+    if args.strategy or args.when or args.dates:
+        for key in ("strategy", "profile", "params", "when", "dates"):
+            entry.pop(key, None)
+        if args.strategy:
+            entry["strategy"] = args.strategy
+        if args.when:
+            entry["when"] = args.when
+        if args.dates:
+            entry["dates"] = [d.strip() for d in args.dates.split(",") if d.strip()]
+    flags = {
+        "codes": [c.upper() for c in args.codes] or None, "from": args.start, "to": args.end,
+        "entry.profile": args.profile, "entry.fill": args.fill,
+        "entry.new_signal_only": False if args.every_signal_day else None,
+        "exit.stop_pct": args.stop, "exit.target_pct": args.target, "exit.trail_pct": args.trail_pct,
+        "exit.trail_ma": args.trail_ma, "exit.when_any": args.exit_when, "exit.max_days": args.max_days,
+        "hold.min_days": args.min_days, "hold.cooldown_days": args.cooldown, "costs.round_trip_pct": args.cost,
+        "capital.start": args.capital, "capital.per_trade_pct": args.size_pct, "in_sample_until": args.in_sample_until,
+    }
+    for path, value in flags.items():
+        if value is not None:
+            _set_path(data, path, value)
+    for item in args.set:
+        path, _, raw = item.partition("=")
+        _set_path(data, path, yaml.safe_load(raw))
+    return TradePlan.model_validate(data)
+
+
+def cmd_simulate(args, settings, db) -> int:
+    if not (args.plan or args.strategy or args.when or args.dates):
+        saved = ", ".join(list_plans()) or "none yet"
+        raise SystemExit("Give a plan (--plan NAME) or an entry rule (--strategy / --when / --dates). "
+                         f"Saved plans: {saved}. See docs/06-trade-lab-plan.md")
+    try:
+        plan = _plan_from_args(args)
+    except (ValueError, FileNotFoundError) as e:
+        raise SystemExit(str(e))
+    if not plan.codes:
+        raise SystemExit("Which stock? Give codes, e.g. `simulate PTL ...`, or set codes in the plan.")
+    prices = engine.load_adjusted_prices(db, settings, plan.codes)
+    try:
+        res = simulate.run_plan(plan, prices)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    _print_simulation(res)
+    if args.csv:
+        res.trades.to_csv(args.csv, index=False, float_format="%.2f")
+        print(f"\nWrote {len(res.trades)} trades to {args.csv}")
+    if args.equity_csv:
+        res.equity.to_csv(args.equity_csv, index=False, float_format="%.2f")
+        print(f"Wrote the equity curve ({len(res.equity)} rows) to {args.equity_csv}")
+    return 0
+
+
+def _print_simulation(res: simulate.LabResult) -> None:
+    plan = res.plan
+    span = ""
+    if not res.stocks.empty:
+        span = f", {res.stocks['start'].min():%Y-%m-%d} .. {res.stocks['end'].max():%Y-%m-%d}"
+    print(f"\n=== Trade lab: {plan.name} on {', '.join(plan.codes)}{span}")
+    for line in simulate.describe(plan):
+        print("  " + line)
+    t = res.trades
+    if t.empty:
+        print("\nNo trades.")
+    else:
+        table = pd.DataFrame({
+            "code": t["code"], "signal": t["signal_date"].dt.strftime("%Y-%m-%d"),
+            "bought": t["entry_date"].dt.strftime("%Y-%m-%d"), "at": t["entry"], "actual": t["entry_actual"],
+            "sold": t["exit_date"].dt.strftime("%Y-%m-%d"), "at ": t["exit"], "actual ": t["exit_actual"],
+            "why": t["why"], "days": t["days"], "net%": t["ret_pct"], "best%": t["best_pct"],
+            "worst%": t["worst_pct"], "flags": t["flags"],
+        })
+        adjusted = (t["entry_actual"] - t["entry"]).abs().gt(1e-9).any() or (t["exit_actual"] - t["exit"]).abs().gt(1e-9).any()
+        if not adjusted:
+            table = table.drop(columns=["actual", "actual "])
+        if len(plan.codes) == 1:
+            table = table.drop(columns="code")
+        if not t["flags"].astype(bool).any():
+            table = table.drop(columns="flags")
+        print("\nTrades (prices adjusted for bonus/rights" + ("; actual = the price traded that day" if adjusted else "")
+              + "; net of costs; days = trading days from signal to exit; best/worst = intraday extremes while held):")
+        with pd.option_context("display.width", 250, "display.max_rows", 1000, "display.max_colwidth", 60,
+                               "display.float_format", "{:,.1f}".format):
+            print(table.to_string(index=False))
+
+        cols = {"trades": "trades", "win_rate": "win%", "mean_ret": "mean%", "median_ret": "median%",
+                "avg_win": "avg win%", "avg_loss": "avg loss%", "profit_factor": "PF", "best": "best%",
+                "worst": "worst%", "median_days": "days"}
+        s = simulate.summarize(res)
+        if s.loc["all", "trades"]:
+            print("\nSummary (closed trades; PF = profit factor, gross wins / gross losses):")
+            with pd.option_context("display.width", 220, "display.float_format", "{:,.1f}".format):
+                print(s[list(cols)].rename(columns=cols).to_string())
+
+    if not res.stocks.empty:
+        st = res.stocks
+        out = pd.DataFrame({
+            "window": st["start"].dt.strftime("%Y-%m-%d") + " .. " + st["end"].dt.strftime("%Y-%m-%d"),
+            "plan%": st["plan_pct"], "buy&hold%": st["buy_hold_pct"],
+            "plan max DD%": st["plan_max_dd_pct"], "B&H max DD%": st["buy_hold_max_dd_pct"],
+            "in market%": st["in_market_pct"], "trades": st["trades"], "end equity": st["end_equity"],
+        })
+        print("\nPer stock (plan = equity growth with the sizing above; buy & hold = first open to last close, "
+              "less one round trip; DD = largest fall from a high):")
+        with pd.option_context("display.width", 220, "display.float_format", "{:,.1f}".format):
+            print(out.to_string())
+    for line in res.pending:
+        print("\nSignal now: " + line)
+    if res.warnings:
+        print("\nWarnings:")
+        for w in res.warnings:
+            print("  - " + w)
+
+
 def _print_casestudy(cs: casestudy.CaseStudy, shortlist: bool) -> None:
     w = cs.window
     print(f"\n=== {cs.code}: {cs.profile} profile, {cs.start:%Y-%m-%d} .. {cs.end:%Y-%m-%d}")
@@ -674,6 +839,7 @@ COMMANDS = {
     "backtest": cmd_backtest,
     "tune": cmd_tune,
     "casestudy": cmd_casestudy,
+    "simulate": cmd_simulate,
     "research": cmd_research,
     "telegram-setup": cmd_telegram_setup,
     "telegram-test": cmd_telegram_test,

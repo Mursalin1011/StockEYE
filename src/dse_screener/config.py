@@ -5,11 +5,11 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
 from .rules import Rule
 
@@ -233,6 +233,140 @@ class Profile(BaseModel):
     strategies: dict[str, StrategyConfig] = {}
     ranking: RankingConfig = RankingConfig()
     backtest: BacktestConfig = BacktestConfig()
+
+
+# --- trade lab plans (docs/06-trade-lab-plan.md) -------------------------------
+
+OPERATORS = (">", "<", ">=", "<=", "crosses_above", "crosses_below")
+
+
+def _parse_condition(v):
+    """'close > sma_50' or [close, '>', sma_50] -> (left, op, right); a numeric right side becomes a float."""
+    if isinstance(v, str):
+        parts = v.split()
+        if len(parts) != 3:
+            raise ValueError(f"condition '{v}': expected 'left op right', e.g. 'close > sma_50' or 'rsi_14 < 40'")
+        v = parts
+    if isinstance(v, (list, tuple)) and len(v) == 3 and isinstance(v[2], str):
+        try:
+            v = (v[0], v[1], float(v[2]))
+        except ValueError:
+            pass
+    return v
+
+
+# (left column, operator, right column or number); columns: see features.py
+Condition = Annotated[tuple[str, Literal[OPERATORS], float | str], BeforeValidator(_parse_condition)]
+
+
+def condition_text(c: Condition) -> str:
+    left, op, right = c
+    return f"{left} {op.replace('_', ' ')} {right:g}" if isinstance(right, float) else f"{left} {op.replace('_', ' ')} {right}"
+
+
+class PlanEntry(BaseModel):
+    """When to buy. A signal on day t (after the close) buys at t+1's open, or at t's close with same_close."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    strategy: str | None = None          # an existing strategy's signal, e.g. base_breakout
+    profile: str | None = None           # take that strategy's parameters from this profile
+    params: dict = {}                    # and override these
+    when: list[Condition] = []           # all must be true (together with the strategy, if any)
+    dates: list[date] = []               # instead: the days you buy on (a non-trading day rolls forward)
+    fill: Literal["next_open", "same_close"] = "next_open"
+    new_signal_only: bool = True         # act only on the first day of a run of signal days
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if self.dates and (self.strategy or self.when):
+            raise ValueError("entry: use either dates, or strategy/when, not both")
+        if not (self.dates or self.strategy or self.when):
+            raise ValueError("entry needs a strategy, conditions (when) or dates")
+        if (self.profile or self.params) and not self.strategy:
+            raise ValueError("entry: profile/params only apply with a strategy")
+        return self
+
+
+class PlanExit(BaseModel):
+    """When to sell: the first rule to trigger. Checked in the order of the fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stop_pct: float | None = None        # intraday low this % below the entry; a gap down fills at the open
+    target_pct: float | None = None      # intraday high this % above the entry; a gap up fills at the open
+    trail_pct: float | None = None       # close this % below the highest close since entry
+    trail_ma: int | None = None          # close below this moving average
+    when_any: list[Condition] = []       # any true at the close
+    max_days: int | None = None          # close this many trading days after the signal day
+
+    @property
+    def any(self) -> bool:
+        return any(v is not None for v in (self.stop_pct, self.target_pct, self.trail_pct, self.trail_ma,
+                                           self.max_days)) or bool(self.when_any)
+
+
+class PlanHold(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_days: int = 2          # no exit before entry day + this many trading days (DSE settlement)
+    cooldown_days: int = 0     # trading days to wait after an exit before buying again
+
+
+class PlanCosts(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    round_trip_pct: float = 1.0
+
+
+class PlanCapital(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start: float = 100_000
+    per_trade_pct: float = Field(100, gt=0, le=100)   # share of current equity put into each trade
+
+
+class TradePlan(BaseModel):
+    """Your own entry/exit rules, tested on one or more stocks (each on its own). config/plans/*.yaml"""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str = "custom"
+    description: str = ""
+    codes: list[str] = []
+    start: date | None = Field(None, alias="from")
+    end: date | None = Field(None, alias="to")
+    entry: PlanEntry
+    exit: PlanExit = PlanExit()
+    hold: PlanHold = PlanHold()
+    costs: PlanCosts = PlanCosts()
+    capital: PlanCapital = PlanCapital()
+    in_sample_until: date | None = None   # optional: stats split into tuning (up to here) and test periods
+
+    @field_validator("codes")
+    @classmethod
+    def _upper(cls, v: list[str]) -> list[str]:
+        return [c.strip().upper() for c in v]
+
+
+def plan_path(name_or_path: str) -> Path:
+    p = Path(name_or_path)
+    return p if p.suffix in (".yaml", ".yml") else CONFIG_DIR / "plans" / f"{name_or_path}.yaml"
+
+
+def read_plan_data(name_or_path: str) -> dict:
+    path = plan_path(name_or_path)
+    if not path.exists():
+        raise FileNotFoundError(f"No plan '{name_or_path}' ({path}). Saved plans: {', '.join(list_plans()) or 'none'}")
+    return _read_yaml(path)
+
+
+def load_plan(name_or_path: str) -> TradePlan:
+    return TradePlan.model_validate(read_plan_data(name_or_path))
+
+
+def list_plans() -> list[str]:
+    return sorted(p.stem for p in (CONFIG_DIR / "plans").glob("*.yaml"))
 
 
 def _read_yaml(path: Path) -> dict:

@@ -48,3 +48,10 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> p
     line = ema(close, fast) - ema(close, slow)
     sig = line.ewm(span=signal, adjust=False, min_periods=signal).mean()
     return pd.DataFrame({"macd": line, "signal": sig, "hist": line - sig})
+
+
+def atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
+    """Wilder's Average True Range: the typical daily range, gaps included, in price units."""
+    prev = df["close"].shift()
+    tr = pd.concat([df["high"] - df["low"], (df["high"] - prev).abs(), (df["low"] - prev).abs()], axis=1).max(axis=1)
+    return pd.Series(_wilder(tr.astype(float).to_numpy(), window), index=df.index)
