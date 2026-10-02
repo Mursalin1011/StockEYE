@@ -107,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     r = rs.add_parser("show", help="print a stored review (default: the latest)")
     r.add_argument("id", nargs="?", type=int)
     rs.add_parser("score", help="score AI calls whose horizon has passed, and show the track record")
+    r = rs.add_parser("evening", help="the 22:30 job: import inbox, score calls, review new documents, send")
+    r.add_argument("--dry-run", action="store_true", help="print instead of sending to Telegram")
 
     p = sub.add_parser("api", help="start the API for the web dashboard (127.0.0.1 only)")
     p.add_argument("--port", type=int, default=8000)
@@ -501,6 +503,27 @@ def cmd_research(args, settings, db) -> int:
     from .research import documents, ledger, render, review
 
     cmd = args.research_cmd
+    if cmd == "evening":
+        from .research.evening import run_evening
+
+        log_path = _log_to_file(settings, "research")
+        try:
+            deliver = _deliverer(settings, args.dry_run)
+        except TelegramError as exc:
+            log.error("%s", exc)
+            return 3
+        try:
+            outcome = run_evening(db, settings, deliver)
+        except Exception as exc:
+            log.exception("Evening research run failed")
+            if not args.dry_run:
+                try:
+                    deliver(report.build_notice("⚠️ AI review failed", f"{type(exc).__name__}: {exc}\nLog: {log_path}"))
+                except Exception:
+                    log.exception("Could not send the failure notice either")
+            return 1
+        log.info("Evening research run: %s", outcome)
+        return 0
     if cmd in ("add", "inbox"):
         results = []
         if cmd == "inbox":

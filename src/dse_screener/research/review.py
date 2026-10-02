@@ -229,6 +229,14 @@ def build_request(db: Database, settings: Settings, docs: pd.DataFrame, include_
     return request, context
 
 
+def has_credentials(settings: Settings) -> bool:
+    """An API key in secrets.yaml or the environment (the SDK can also use other credential sources,
+    but these are the ones StockEYE documents)."""
+    import os
+
+    return bool(settings.anthropic.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+
+
 def make_client(settings: Settings):
     import anthropic
 

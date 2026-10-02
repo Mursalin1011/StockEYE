@@ -6,7 +6,6 @@ Read-mostly: the only write is POST /api/screens/run. Bound to localhost by the 
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 import uuid
@@ -378,7 +377,9 @@ _jobs_lock = threading.Lock()
 
 
 def _has_api_key() -> bool:
-    return bool(settings.anthropic.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    from ..research.review import has_credentials
+
+    return has_credentials(settings)
 
 
 @app.get("/api/research")

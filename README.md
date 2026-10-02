@@ -140,6 +140,15 @@ sector views and stock calls with confidence, horizon and "wrong if" conditions.
 .\.venv\Scripts\python.exe -m dse_screener research score      # score matured calls, calibration table
 ```
 
+**Evening job** (Sun–Thu 22:30, after the market review usually arrives): imports `data/inbox/pdf/`,
+scores matured calls, reviews new documents and sends the summary to Telegram. It stays silent when
+nothing is new. Logs: `data/logs/research-YYYY-MM-DD.log`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_research_task.ps1
+& $py -m dse_screener research evening --dry-run    # same job, printed instead of sent
+```
+
 The dashboard's **Research** page does the same: add links, import the inbox, run a review, read it,
 and see the track record. A review of three PDFs (~30 pages) costs roughly USD 0.40–0.70 with
 `claude-opus-5-5` at `effort: high` (settings.yaml → `research`). Broker reports are marked "not for

@@ -218,3 +218,42 @@ def test_score_calls_against_the_basket(env):
     assert calls.loc[("PTL", "bearish"), "correct"] == 1 and calls.loc[("AAA", "bullish"), "correct"] == 1
     tr = ledger.track_record(db)
     assert tr["calls_scored"] == 2 and tr["hit_rate_pct"] == 100.0
+
+
+# --- evening job -------------------------------------------------------------
+
+def test_evening_is_quiet_without_new_documents(env):
+    from dse_screener.research.evening import run_evening
+
+    settings, db = env
+    sent = []
+    assert run_evening(db, settings, sent.append, client=FakeClient(_answer())) == "nothing_new"
+    assert sent == []
+
+
+def test_evening_reviews_new_inbox_documents_and_sends(env):
+    from dse_screener.research.evening import run_evening
+
+    settings, db = env
+    _seed_market(db)
+    settings.research.inbox.mkdir(parents=True)
+    (settings.research.inbox / f"SSL-Newsflash-{date.today():%B-%d-%Y}-1.pdf").write_bytes(_pdf())
+    sent = []
+    assert run_evening(db, settings, sent.append, client=FakeClient(_answer())) == "sent"
+    assert len(sent) == 1 and "AI review" in sent[0] and "PTL" in sent[0]
+    # the same file again: already reviewed, nothing sent
+    assert run_evening(db, settings, sent.append, client=FakeClient(_answer())) == "nothing_new"
+    assert len(sent) == 1
+
+
+def test_evening_without_key_says_documents_are_waiting(env, monkeypatch):
+    from dse_screener.research.evening import run_evening
+
+    settings, db = env
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    settings.anthropic.api_key = ""
+    documents.add_document(db, settings, _pdf(), f"SSL-Newsflash-{date.today():%B-%d-%Y}-1.pdf")
+    sent = []
+    assert run_evening(db, settings, sent.append) == "no_key"
+    assert "API key" in sent[0]
