@@ -142,6 +142,49 @@ CREATE TABLE IF NOT EXISTS screen_picks (
     reasons     TEXT NOT NULL           -- JSON list
 );
 
+CREATE TABLE IF NOT EXISTS research_docs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256      TEXT NOT NULL UNIQUE,
+    url         TEXT,
+    file_path   TEXT NOT NULL,          -- local copy under research.store
+    filename    TEXT NOT NULL,
+    source      TEXT,                   -- matched rule in config/research/sources.yaml
+    publisher   TEXT,
+    doc_type    TEXT NOT NULL,          -- newsflash | market_review | macro | company | sector | other
+    published   TEXT,                   -- YYYY-MM-DD
+    pages       INTEGER,
+    text        TEXT,                   -- extracted text (for search and code matching)
+    codes       TEXT NOT NULL,          -- JSON list of DSE codes mentioned
+    added_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ai_reviews (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT NOT NULL,
+    as_of       TEXT NOT NULL,          -- latest trading day in StockEYE's data at review time
+    model       TEXT NOT NULL,
+    doc_ids     TEXT NOT NULL,          -- JSON list
+    review      TEXT NOT NULL,          -- JSON (research.review.Review)
+    usage       TEXT,                   -- JSON token usage
+    guide_sha   TEXT                    -- version of ANALYST.md used
+);
+
+CREATE TABLE IF NOT EXISTS ai_calls (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id     INTEGER NOT NULL,
+    as_of         TEXT NOT NULL,
+    code          TEXT NOT NULL,
+    stance        TEXT NOT NULL,        -- bullish | bearish | neutral
+    horizon_days  INTEGER NOT NULL,
+    confidence    REAL NOT NULL,        -- 0-100
+    thesis        TEXT,
+    ret           REAL,                 -- filled by `research score` once the horizon has passed
+    bench         REAL,
+    excess        REAL,
+    correct       INTEGER,              -- 1/0; NULL for neutral or not yet scored
+    scored_at     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ingest_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_at      TEXT NOT NULL,

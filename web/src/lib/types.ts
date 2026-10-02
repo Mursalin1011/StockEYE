@@ -189,3 +189,73 @@ export type CaseStudyView = {
 export type HistoryRow = { as_of: string; profile: string; rank: number; code: string; final_score: number; strategies: string[] };
 
 export type ProfileFile = { name: string; path: string; yaml: string };
+
+export type Stance = "bullish" | "bearish" | "neutral";
+
+export type ResearchDoc = {
+  id: number;
+  url: string | null;
+  filename: string;
+  source: string | null;
+  publisher: string | null;
+  doc_type: string;
+  published: string | null;
+  pages: number | null;
+  codes: string[];
+  added_at: string;
+  reviewed: boolean;
+};
+
+export type ReviewSummary = { id: number; created_at: string; as_of: string; model: string; doc_ids: number[]; headline: string; calls: number };
+
+export type CalibrationRow = { confidence: string; calls: number; expected_hit_pct: number | null; actual_hit_pct: number | null; avg_excess_pct: number | null };
+
+export type ResearchOverview = {
+  has_api_key: boolean;
+  model: string;
+  guide: string;
+  sources: string;
+  inbox: string;
+  docs: ResearchDoc[];
+  reviews: ReviewSummary[];
+  track_record: { calls_made: number; calls_scored: number; hit_rate_pct?: number; avg_excess_vs_basket_pct?: number; note?: string };
+  calibration: CalibrationRow[];
+  running: { id: string; started: number }[];
+};
+
+export type StockCall = {
+  code: string;
+  company: string;
+  stance: Stance;
+  horizon_days: number;
+  confidence: number;
+  thesis: string;
+  evidence: string[];
+  invalidation: string;
+  stockeye_view: "agrees" | "disagrees" | "silent";
+  stockeye_note: string;
+  priced_in: "no" | "partly" | "yes" | "unknown";
+};
+
+export type ReviewBody = {
+  headline: string;
+  market_view: { stance: Stance; confidence: number; horizon_days: number; summary: string; drivers: string[]; risks: string[] };
+  macro: { topic: string; summary: string; impact: "positive" | "negative" | "mixed" | "neutral"; sectors: string[]; source: string }[];
+  sectors: { sector: string; stance: Stance; confidence: number; rationale: string }[];
+  calls: StockCall[];
+  watch: { code: string; what_to_watch: string }[];
+  noise: string[];
+  data_gaps: string[];
+  sources_used: { document: string; key_points: string[] }[];
+};
+
+export type ReviewDetail = {
+  id: number;
+  created_at: string;
+  as_of: string;
+  model: string;
+  usage: Record<string, number | string | null> | null;
+  review: ReviewBody;
+  docs: { id: number; source: string | null; filename: string; doc_type: string; published: string | null; url: string | null }[];
+  scores: { code: string; stance: Stance; horizon_days: number; confidence: number; ret: number | null; bench: number | null; excess: number | null; correct: number | null }[];
+};

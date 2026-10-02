@@ -80,6 +80,27 @@ class TelegramConfig(BaseModel):
     chat_id: str = ""
 
 
+class ResearchConfig(BaseModel):
+    """AI review of research documents (broker PDFs etc.). See config/research/ANALYST.md."""
+
+    guide: Path = Path("config/research/ANALYST.md")     # the analyst's standing instructions
+    sources: Path = Path("config/research/sources.yaml")  # how documents are recognised
+    inbox: Path = Path("data/inbox/pdf")                 # drop PDFs here; `research inbox` imports them
+    store: Path = Path("data/research")                  # imported copies (git-ignored, never published)
+    model: str = "claude-opus-5-5"
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
+    max_tokens: int = 64000
+    max_docs_per_review: int = 6
+    max_pdf_mb: float = 25.0             # per document; the API takes up to 32 MB per request
+    lookback_days: int = 4               # a review covers unreviewed documents published this recently
+    max_context_stocks: int = 60         # StockEYE data for at most this many mentioned stocks
+    send_telegram: bool = True           # `research review` sends the summary to Telegram
+
+
+class AnthropicConfig(BaseModel):
+    api_key: str = ""    # from config/secrets.yaml or ANTHROPIC_API_KEY; empty = SDK default credentials
+
+
 class Settings(BaseModel):
     timezone: str = "Asia/Dhaka"
     paths: Paths
@@ -90,6 +111,8 @@ class Settings(BaseModel):
     daily: DailyConfig = DailyConfig()
     report: ReportConfig = ReportConfig()
     telegram: TelegramConfig = TelegramConfig()
+    research: ResearchConfig = ResearchConfig()
+    anthropic: AnthropicConfig = AnthropicConfig()
 
     @property
     def tz(self) -> ZoneInfo:
@@ -226,6 +249,8 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env):
             tg[key] = os.environ[env]
     data["telegram"] = tg
+    ai = {**data.get("anthropic", {}), **{k: v for k, v in (secrets.get("anthropic") or {}).items() if v}}
+    data["anthropic"] = ai
     return Settings.model_validate(data)
 
 

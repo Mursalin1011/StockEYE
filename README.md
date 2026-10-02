@@ -26,7 +26,7 @@ DSE websites ──► Python engine (src/dse_screener) ──► SQLite (data/d
 
 ```powershell
 py -3.14 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev,api]"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,api,research]"
 cd web; npm install; cd ..
 ```
 
@@ -116,6 +116,35 @@ the fixed holding periods in `backtest.horizons`, any exit styles in `backtest.e
 .\.venv\Scripts\python.exe -m dse_screener casestudy PTL --from 2025-11-01 [--profile swing] [--shortlist]
 ```
 
+## AI research review
+
+Broker PDFs (newsflash, market review, monetary policy review, company research) are read by Claude
+together with StockEYE's own data on every stock they mention, and turned into a market view,
+sector views and stock calls with confidence, horizon and "wrong if" conditions.
+
+- **The analyst's instructions** are in [`config/research/ANALYST.md`](config/research/ANALYST.md):
+  your method, ground rules, how to read each report type, DSE realities, the confidence scale.
+  Edit it to change how it judges.
+- **Sources** are recognised by [`config/research/sources.yaml`](config/research/sources.yaml)
+  (publisher, report type). Add a rule for each new publisher; unknown documents still work.
+- **Every call is scored** against the quality-stock basket once its horizon has passed
+  (`research score`, also run by the daily job); the analyst sees its own track record next time.
+
+```powershell
+# one-time: an API key from platform.claude.com, in config/secrets.yaml -> anthropic: {api_key: ...}
+.\.venv\Scripts\python.exe -m dse_screener research add https://…/SSL-Newsflash-October-1-2026-….pdf
+.\.venv\Scripts\python.exe -m dse_screener research inbox      # or drop PDFs into data/inbox/pdf/
+.\.venv\Scripts\python.exe -m dse_screener research review     # unreviewed recent documents -> review + Telegram
+.\.venv\Scripts\python.exe -m dse_screener research review --dry-run   # see exactly what would be sent
+.\.venv\Scripts\python.exe -m dse_screener research show       # print the latest review
+.\.venv\Scripts\python.exe -m dse_screener research score      # score matured calls, calibration table
+```
+
+The dashboard's **Research** page does the same: add links, import the inbox, run a review, read it,
+and see the track record. A review of three PDFs (~30 pages) costs roughly USD 0.40–0.70 with
+`claude-opus-5-5` at `effort: high` (settings.yaml → `research`). Broker reports are marked "not for
+public distribution": they stay in `data/` (git-ignored) and are only sent to the Claude API.
+
 ## Daily Telegram summary
 
 1. In Telegram, message **@BotFather**, send `/newbot`, and copy the token.
@@ -143,6 +172,7 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener backtest --profile swing [--set PATH=VALUE] [--csv trades.csv]
 & $py -m dse_screener tune --profile swing --grid PATH=V1,V2
 & $py -m dse_screener casestudy PTL --from 2025-11-01   # every signal on one stock, with outcomes
+& $py -m dse_screener research add <link> ; research review   # AI review of research PDFs
 & $py -m dse_screener api             # API for the dashboard
 & $py -m pytest                       # tests
 ```
@@ -161,6 +191,7 @@ src/dse_screener/
   engine.py                # filter -> strategies -> ranking (shared by live screen and backtest)
   backtest.py              # next-day entry, costs, benchmark, non-overlapping trades, exit styles, recall
   casestudy.py             # one stock over a period: every signal, outcome and big move
+  research/                # AI review: documents, StockEYE context, Claude review, prediction ledger
   daily.py, report.py, notify/   # the 3pm job and Telegram
   api/app.py               # FastAPI for the dashboard
 web/                       # Next.js 16 dashboard (App Router, Tailwind, TradingView Lightweight Charts)

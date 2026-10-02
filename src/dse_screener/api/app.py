@@ -6,13 +6,17 @@ Read-mostly: the only write is POST /api/screens/run. Bound to localhost by the 
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
+import uuid
 from collections.abc import Iterator
 from datetime import date
 
 import pandas as pd
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel
 
 from .. import backtest, casestudy, engine, indicators, quality, report, rules
 from ..config import CONFIG_DIR, list_profiles, load_profile, load_settings
@@ -356,3 +360,116 @@ def config_raw():
     """Parsed profiles (for future editing UI)."""
     return {n: yaml.safe_load((CONFIG_DIR / "profiles" / f"{n}.yaml").read_text(encoding="utf-8"))
             for n in list_profiles(settings)}
+
+
+# --- research & AI review -----------------------------------------------------
+
+class AddDocBody(BaseModel):
+    url: str
+    doc_type: str | None = None
+
+
+class ReviewBody(BaseModel):
+    doc_ids: list[int] | None = None
+
+
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+
+
+def _has_api_key() -> bool:
+    return bool(settings.anthropic.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+
+
+@app.get("/api/research")
+def research_overview(db: Database = Depends(get_db)):
+    from ..research import documents, ledger, review
+
+    docs = documents.load_docs(db).head(100)
+    reviews = review.load_reviews(db).head(50)
+    rows = [{"id": int(r.id), "created_at": r.created_at, "as_of": r.as_of, "model": r.model, "doc_ids": r.doc_ids,
+             "headline": r.review.get("headline"), "calls": len(r.review.get("calls", []))} for r in reviews.itertuples()]
+    with _jobs_lock:
+        running = [dict(id=k, **v) for k, v in _jobs.items() if v["status"] == "running"]
+    return {
+        "has_api_key": _has_api_key(), "model": settings.research.model,
+        "guide": str(settings.research.guide).replace("\\", "/"), "sources": str(settings.research.sources).replace("\\", "/"),
+        "inbox": str(settings.research.inbox).replace("\\", "/"),
+        "docs": records(docs.drop(columns=["file_path"])),
+        "reviews": rows,
+        "track_record": ledger.track_record(db),
+        "calibration": records(ledger.calibration_table(db)),
+        "running": running,
+    }
+
+
+@app.get("/api/research/reviews/{review_id}")
+def research_review(review_id: int, db: Database = Depends(get_db)):
+    from ..research import documents, ledger, review
+
+    reviews = review.load_reviews(db)
+    row = reviews[reviews["id"] == review_id]
+    if row.empty:
+        raise HTTPException(404, f"No review #{review_id}")
+    r = row.iloc[0]
+    calls = ledger.load_calls(db)
+    calls = calls[calls["review_id"] == review_id]
+    docs = documents.load_docs(db, r["doc_ids"])
+    return {"id": review_id, "created_at": r["created_at"], "as_of": r["as_of"], "model": r["model"],
+            "usage": r["usage"], "review": r["review"],
+            "docs": records(docs[["id", "source", "filename", "doc_type", "published", "url"]]),
+            "scores": records(calls[["code", "stance", "horizon_days", "confidence", "ret", "bench", "excess", "correct"]])}
+
+
+@app.post("/api/research/docs")
+def research_add(body: AddDocBody, db: Database = Depends(get_db)):
+    from ..research import documents
+
+    try:
+        res = documents.add_url(db, settings, body.url.strip(), body.doc_type or None)
+    except (ValueError, OSError) as e:      # bad link, not a PDF, too big, network error
+        raise HTTPException(400, str(e)) from e
+    return res.__dict__
+
+
+@app.post("/api/research/inbox")
+def research_inbox(db: Database = Depends(get_db)):
+    from ..research import documents
+
+    return [r.__dict__ for r in documents.scan_inbox(db, settings)]
+
+
+@app.post("/api/research/review")
+def research_run(body: ReviewBody):
+    """Start an AI review in the background (it takes 1-3 minutes); poll /api/research/jobs/{id}."""
+    if not _has_api_key():
+        raise HTTPException(400, "No Anthropic API key: add anthropic.api_key to config/secrets.yaml (see secrets.example.yaml)")
+    job_id = uuid.uuid4().hex[:12]
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "running", "started": time.time(), "review_id": None, "error": None}
+
+    def work():
+        from ..research import review
+
+        db = Database(settings.resolve(settings.paths.db), check_same_thread=False)
+        try:
+            run = review.run_review(db, settings, body.doc_ids)
+            update = {"status": "done", "review_id": run.review_id}
+        except Exception as e:  # noqa: BLE001 - reported to the page
+            update = {"status": "error", "error": str(e)}
+        finally:
+            db.close()
+        with _jobs_lock:
+            _jobs[job_id].update(update)
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/research/jobs/{job_id}")
+def research_job(job_id: str):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Unknown job")
+    return {"id": job_id, **job}

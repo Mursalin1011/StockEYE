@@ -91,6 +91,23 @@ def main(argv: list[str] | None = None) -> int:
                    help="also run each profile's backtest to show the stock's actual shortlist rank (slower)")
     p.add_argument("--csv", type=Path, help="write the signals to this CSV file")
 
+    p = sub.add_parser("research", help="research PDFs and the AI review (see config/research/ANALYST.md)")
+    rs = p.add_subparsers(dest="research_cmd", required=True)
+    r = rs.add_parser("add", help="add PDF links (https) or files")
+    r.add_argument("items", nargs="+", help="https:// links or local PDF paths")
+    r.add_argument("--type", dest="doc_type", choices=["newsflash", "market_review", "macro", "company", "sector", "other"],
+                   help="override the type from config/research/sources.yaml")
+    rs.add_parser("inbox", help="import every PDF in the inbox folder (research.inbox)")
+    r = rs.add_parser("list", help="list stored documents")
+    r.add_argument("--limit", type=int, default=20)
+    r = rs.add_parser("review", help="AI review of unreviewed recent documents (or --doc ids)")
+    r.add_argument("--doc", type=int, action="append", help="document id (repeatable)")
+    r.add_argument("--dry-run", action="store_true", help="write the request to a file instead of calling the API")
+    r.add_argument("--no-send", action="store_true", help="don't send the summary to Telegram")
+    r = rs.add_parser("show", help="print a stored review (default: the latest)")
+    r.add_argument("id", nargs="?", type=int)
+    rs.add_parser("score", help="score AI calls whose horizon has passed, and show the track record")
+
     p = sub.add_parser("api", help="start the API for the web dashboard (127.0.0.1 only)")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--reload", action="store_true", help="restart on code changes (development)")
@@ -480,6 +497,72 @@ def _print_casestudy(cs: casestudy.CaseStudy, shortlist: bool) -> None:
                   + ("caught early by " + ", ".join(m.caught_by) if m.caught_by else "not caught early"))
 
 
+def cmd_research(args, settings, db) -> int:
+    from .research import documents, ledger, render, review
+
+    cmd = args.research_cmd
+    if cmd in ("add", "inbox"):
+        results = []
+        if cmd == "inbox":
+            results = documents.scan_inbox(db, settings)
+        else:
+            for item in args.items:
+                try:
+                    if item.lower().startswith(("http://", "https://")):
+                        results.append(documents.add_url(db, settings, item, args.doc_type))
+                    else:
+                        results.append(documents.add_file(db, settings, Path(item), args.doc_type))
+                except Exception as e:  # noqa: BLE001 - report and continue with the other items
+                    print(f"FAILED {item}: {e}")
+        for res in results:
+            state = "added" if res.created else "already stored"
+            print(f"#{res.doc_id} {state}: {res.filename} ({res.doc_type}, {res.published}, {len(res.codes)} stocks mentioned)")
+        if not results:
+            print("Nothing added.")
+        return 0
+    if cmd == "list":
+        docs = documents.load_docs(db).head(args.limit)
+        if docs.empty:
+            print("No documents yet. Add some: research add <link>")
+            return 0
+        docs["stocks"] = docs["codes"].map(len)
+        docs["reviewed"] = docs["reviewed"].map({True: "yes", False: ""})
+        with pd.option_context("display.width", 200, "display.max_colwidth", 70):
+            print(docs[["id", "published", "doc_type", "source", "pages", "stocks", "reviewed", "filename"]].to_string(index=False))
+        return 0
+    if cmd == "review":
+        run = review.run_review(db, settings, args.doc, dry_run=args.dry_run)
+        if args.dry_run:
+            print(f"Dry run: request for documents {run.doc_ids} (PDF bytes omitted) written to {run.request_file}")
+            return 0
+        docs = documents.load_docs(db, run.doc_ids)
+        print(render.text(run.review, run.as_of))
+        u = run.usage or {}
+        print(f"\nReview #{run.review_id} saved · {len(run.review.calls)} calls · tokens in {u.get('input_tokens')}, "
+              f"out {u.get('output_tokens')}, cache read {u.get('cache_read_input_tokens')}")
+        if settings.research.send_telegram and not args.no_send and settings.telegram.enabled:
+            TelegramNotifier(settings.telegram.bot_token, settings.telegram.chat_id).send(
+                render.telegram_html(run.review, run.as_of, (docs["source"].fillna(docs["filename"])).tolist()))
+            print("Sent to Telegram.")
+        return 0
+    if cmd == "show":
+        reviews = review.load_reviews(db)
+        if reviews.empty:
+            print("No reviews yet.")
+            return 0
+        row = reviews.iloc[0] if args.id is None else reviews[reviews["id"] == args.id].iloc[0]
+        print(f"Review #{row['id']} · {row['created_at']} · {row['model']} · documents {row['doc_ids']}\n")
+        print(render.text(review.Review.model_validate(row["review"]), row["as_of"]))
+        return 0
+    if cmd == "score":
+        n = ledger.score_calls(db, settings)
+        print(f"Scored {n} call(s).")
+        with pd.option_context("display.float_format", "{:,.1f}".format):
+            print(ledger.calibration_table(db).to_string(index=False))
+        return 0
+    raise SystemExit(f"unknown research command {cmd}")
+
+
 def cmd_api(args, settings, db) -> int:
     import uvicorn
 
@@ -558,6 +641,7 @@ COMMANDS = {
     "backtest": cmd_backtest,
     "tune": cmd_tune,
     "casestudy": cmd_casestudy,
+    "research": cmd_research,
     "telegram-setup": cmd_telegram_setup,
     "telegram-test": cmd_telegram_test,
     "status": cmd_status,

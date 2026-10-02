@@ -1,0 +1,49 @@
+# Research sources: how StockEYE recognises a document from its link or file name.
+#
+# Add a publisher or report type by adding a rule. The first rule whose `match` (a regular
+# expression, case-insensitive) is found in the URL or file name wins. Unmatched documents are
+# still imported as doc_type "other" (or pass --type when adding).
+#
+# doc_type tells the analyst how to read it (see ANALYST.md, section 3):
+#   newsflash      morning news summary (macro, sectors, companies)
+#   market_review  end-of-day market commentary (index, breadth, turnover, blocks, declarations)
+#   macro          central bank / monetary policy / budget / economy reviews
+#   company        research on one company (earnings, valuation, initiation)
+#   sector         sector reports
+#   other          anything else
+
+# Capitalised abbreviations that are also DSE codes but usually mean something else in research text.
+# They are only ignored when written as a bare token; the company's full name still matches.
+ignore_codes:
+  - BBS     # Bangladesh Bureau of Statistics (also the code of Bangladesh Building Systems)
+
+sources:
+  - name: SSL Newsflash
+    publisher: Shanta Securities
+    doc_type: newsflash
+    match: 'SSL-Newsflash'
+
+  - name: SSL Daily Market Review
+    publisher: Shanta Securities
+    doc_type: market_review
+    match: 'SSL-Daily-Market-Review'
+
+  - name: SSL Monetary Policy Review
+    publisher: Shanta Securities
+    doc_type: macro
+    match: 'Monetary-Policy|MPS'
+
+  - name: SSL market report
+    publisher: Shanta Securities
+    doc_type: other
+    match: 'prod-ssl-app-storage\.s3\.amazonaws\.com/market-reports/'
+
+  # Examples for other publishers (uncomment and adjust):
+  # - name: LankaBangla Daily
+  #   publisher: LankaBangla Securities
+  #   doc_type: market_review
+  #   match: 'lankabd.*daily'
+  # - name: Any earnings update
+  #   publisher: unknown
+  #   doc_type: company
+  #   match: 'earnings|initiation|company-update'

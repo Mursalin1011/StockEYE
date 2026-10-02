@@ -1,6 +1,35 @@
 # Daily PDF research: integration plan
 
-_Status: Draft v0.1 · 2026-10-01 · waiting for sample PDFs_
+_Status: v0.2 · 2026-10-02 · R0–R3 built as the "AI research review" (see below); R4 (email) and R5 (evaluation) open_
+
+## Status 2026-10-02: what was built
+
+Samples received: Shanta Securities **Newsflash** (morning, 5 pages: macro, sectors, company news),
+**Daily Market Review** (evening, 5 pages: index, breadth, top turnover/gainers/losers, sector table,
+top 30 by market cap, block trades, declarations, T-bond yields) and a **Monetary Policy Review**
+(19 chart-heavy pages; text extraction is poor, e.g. "9 . 50 %").
+
+Instead of fixed parsers per report (section 3.2), the PDFs go **directly to Claude** (document blocks:
+it reads tables and charts), together with StockEYE's data on every mentioned stock, and the
+analyst follows a written guide. This handles any new publisher without new parsing code.
+
+| Piece | Where |
+|---|---|
+| Analyst guide (the "CLAUDE.md" for the AI) | `config/research/ANALYST.md` |
+| Source recognition (publisher, type, ignore list) | `config/research/sources.yaml` |
+| Add / inbox / text + stock detection | `research/documents.py`; `research add`, `research inbox`, dashboard |
+| StockEYE context (quality, price/volume, signals, record dates, track record) | `research/context.py` |
+| Review (structured JSON, validated; unknown codes dropped) | `research/review.py`; `research review`, dashboard |
+| Prediction ledger + scoring vs the quality basket | `research/ledger.py`; `research score`, daily job |
+| Telegram summary | `research/render.py` |
+
+Stock detection on the samples: the newsflash's CSE50 list and company news map correctly by name
+(One Bank → ONEBANKPLC, Ibn Sina → IBNSINA, Heidelberg → HEIDELBCEM); the market review yields 82 codes
+from its tables. "BBS" (Bureau of Statistics) is on the ignore list.
+
+Still open: R4 (fetch from email automatically), R5 (after ~3 months of scored calls: is the AI's
+confidence calibrated, and do its calls add to StockEYE's signals?). Rules that use AI calls in the
+screen itself (boosts, filters, section 3.4) wait for R5 evidence.
 
 ## 1. Goal
 

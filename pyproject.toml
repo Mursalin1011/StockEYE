@@ -21,6 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
 api = ["fastapi>=0.115", "uvicorn[standard]>=0.30"]
+research = ["anthropic>=1.11", "pypdf>=6.0"]   # AI review of research PDFs
 
 [project.scripts]
 dse = "dse_screener.cli:main"

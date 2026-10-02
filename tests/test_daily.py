@@ -48,6 +48,7 @@ class FakeArchive:
 @pytest.fixture
 def env(tmp_path):
     settings = load_settings()
+    settings.research.inbox, settings.research.store = tmp_path / "inbox", tmp_path / "research"
     db = Database(tmp_path / "test.sqlite")
     sent = []
     yield settings, db, sent

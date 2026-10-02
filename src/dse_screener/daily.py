@@ -79,6 +79,7 @@ def run_daily(
         db.save_screen(res, profile.model_dump_json(by_alias=True))
         results.append((profile, res))
 
+    _research_housekeeping(settings, db)
     pick_codes = sorted({c for _, r in results for c in r.picks["code"]})
     text = report.build_daily_report(
         day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
@@ -114,6 +115,20 @@ def _refresh(settings: Settings, db: Database, client: PoliteClient, codes: list
         log.info("Refreshing news for %d quality-passing stocks", len(news_codes))
         fundamentals.refresh_fundamentals(db, company_src, news_src, news_codes, company_pages=False, news=True)
     fundamentals.rebuild_corporate_actions(db, codes)
+
+
+def _research_housekeeping(settings: Settings, db: Database) -> None:
+    """Import PDFs dropped in the research inbox and score AI calls whose horizon has passed.
+    Never blocks the daily summary: research is optional (needs pypdf) and failures are only logged."""
+    try:
+        from .research import documents, ledger
+
+        added = [r for r in documents.scan_inbox(db, settings) if r.created]
+        scored = ledger.score_calls(db, settings)
+        if added or scored:
+            log.info("Research: %d new document(s) imported, %d AI call(s) scored", len(added), scored)
+    except Exception:  # noqa: BLE001
+        log.exception("Research housekeeping failed (daily summary continues)")
 
 
 def _all_universe_codes(settings: Settings, db: Database) -> list[str]:
