@@ -279,6 +279,14 @@ def run_review(db: Database, settings: Settings, doc_ids: list[int] | None = Non
 
     request, context = build_request(db, settings, docs)
     review, usage = call_claude(client or make_client(settings), request)
+    review_id = save_review(db, settings, review, ids, context["as_of"], usage.get("model") or request["model"], usage)
+    return ReviewRun(review_id, review, context["as_of"], ids, usage)
+
+
+def save_review(db: Database, settings: Settings, review: Review, doc_ids: list[int], as_of: str, model: str,
+                usage: dict | None = None) -> int:
+    """Store a review and its calls in the ledger (unknown codes are dropped and noted)."""
+    ids = doc_ids
     known = set(db.load_companies()["code"])
     unknown = [c.code for c in review.calls if c.code not in known]
     if unknown:     # never store calls on codes that don't exist
@@ -288,13 +296,13 @@ def run_review(db: Database, settings: Settings, doc_ids: list[int] | None = Non
     with db.conn:
         cur = db.conn.execute(
             "INSERT INTO ai_reviews (created_at, as_of, model, doc_ids, review, usage, guide_sha) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (datetime.now(timezone.utc).isoformat(timespec="seconds"), context["as_of"], usage.get("model") or request["model"],
-             json.dumps(ids), review.model_dump_json(), json.dumps(usage), guide_sha),
+            (datetime.now(timezone.utc).isoformat(timespec="seconds"), as_of, model,
+             json.dumps(ids), review.model_dump_json(), json.dumps(usage or {}), guide_sha),
         )
     review_id = cur.lastrowid
-    ledger.save_calls(db, review_id, context["as_of"], [c.model_dump() for c in review.calls])
+    ledger.save_calls(db, review_id, as_of, [c.model_dump() for c in review.calls])
     log.info("Review %d saved: %d calls, usage %s", review_id, len(review.calls), usage)
-    return ReviewRun(review_id, review, context["as_of"], ids, usage)
+    return review_id
 
 
 def load_reviews(db: Database) -> pd.DataFrame:

@@ -138,6 +138,7 @@ sector views and stock calls with confidence, horizon and "wrong if" conditions.
 .\.venv\Scripts\python.exe -m dse_screener research review --dry-run   # see exactly what would be sent
 .\.venv\Scripts\python.exe -m dse_screener research show       # print the latest review
 .\.venv\Scripts\python.exe -m dse_screener research score      # score matured calls, calibration table
+.\.venv\Scripts\python.exe -m dse_screener research import review.json --doc 1 --doc 2   # store a review written elsewhere
 ```
 
 **Evening job** (Sun–Thu 22:30, after the market review usually arrives): imports `data/inbox/pdf/`,

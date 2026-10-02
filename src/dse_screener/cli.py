@@ -107,6 +107,10 @@ def main(argv: list[str] | None = None) -> int:
     r = rs.add_parser("show", help="print a stored review (default: the latest)")
     r.add_argument("id", nargs="?", type=int)
     rs.add_parser("score", help="score AI calls whose horizon has passed, and show the track record")
+    r = rs.add_parser("import", help="store a review written elsewhere (JSON in the review schema) and its calls")
+    r.add_argument("file", type=Path)
+    r.add_argument("--doc", type=int, action="append", required=True, help="document id it covers (repeatable)")
+    r.add_argument("--model", default="manual", help="who wrote it, e.g. 'claude-opus-5-5 (Claude Code)'")
     r = rs.add_parser("evening", help="the 22:30 job: import inbox, score calls, review new documents, send")
     r.add_argument("--dry-run", action="store_true", help="print instead of sending to Telegram")
 
@@ -567,6 +571,12 @@ def cmd_research(args, settings, db) -> int:
             TelegramNotifier(settings.telegram.bot_token, settings.telegram.chat_id).send(
                 render.telegram_html(run.review, run.as_of, (docs["source"].fillna(docs["filename"])).tolist()))
             print("Sent to Telegram.")
+        return 0
+    if cmd == "import":
+        rv = review.Review.model_validate_json(args.file.read_text(encoding="utf-8"))
+        as_of = db.date_range()[1]
+        review_id = review.save_review(db, settings, rv, args.doc, as_of, args.model)
+        print(f"Review #{review_id} stored (as of {as_of}) with {len(rv.calls)} call(s) in the ledger.")
         return 0
     if cmd == "show":
         reviews = review.load_reviews(db)
