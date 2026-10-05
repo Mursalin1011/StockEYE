@@ -121,12 +121,15 @@ def _screen_payload(db: Database, as_of: str) -> dict:
         raise HTTPException(404, f"No saved screen for {as_of}")
     picks = db.load_run_picks(day["run_id"].astype(int).tolist())
     sigs = db.load_run_signals(day["run_id"].astype(int).tolist())
+    watch = db.load_run_watch(day["run_id"].astype(int).tolist())
     codes = sorted(set(picks["code"]))
     news = report.recent_news(db, codes, date.fromisoformat(as_of), settings.report)
     order = {n: i for i, n in enumerate(list_profiles(settings))}
     profiles = []
     for run in sorted(day.itertuples(), key=lambda r: order.get(r.profile, 99)):
         p_picks = picks[picks["run_id"] == run.run_id]
+        p_sigs = sigs[sigs["run_id"] == run.run_id].sort_values("weighted", ascending=False)
+        shortlist = set(p_picks["code"])
         profiles.append({
             "profile": run.profile,
             "description": load_profile(run.profile).description if run.profile in order else "",
@@ -135,8 +138,19 @@ def _screen_payload(db: Database, as_of: str) -> dict:
             "signals": int((sigs["run_id"] == run.run_id).sum()),
             "picks": [{**r, "news": news.get(r["code"], [])}
                       for r in records(p_picks.drop(columns=["run_id"]))],
+            # Every strategy hit, including those below the shortlist cut
+            "all_signals": [{"code": s.code, "strategy": s.strategy, "title": _title(s.strategy), "role": s.role,
+                             "score": s.score, "weighted": s.weighted, "reasons": s.reasons,
+                             "on_shortlist": s.code in shortlist} for s in p_sigs.itertuples()],
+            # Setups still forming (not a signal yet), closest to triggering first
+            "watch": [{"code": w.code, "strategy": w.strategy, "title": _title(w.strategy), "reasons": w.reasons,
+                       "metrics": w.metrics} for w in watch[watch["run_id"] == run.run_id].itertuples()],
         })
     return {"as_of": as_of, "market": report.market_summary(db, date.fromisoformat(as_of)), "profiles": profiles}
+
+
+def _title(strategy: str) -> str:
+    return REGISTRY[strategy].title if strategy in REGISTRY else strategy
 
 
 @app.get("/api/screens/latest")

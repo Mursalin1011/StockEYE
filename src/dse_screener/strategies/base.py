@@ -42,6 +42,15 @@ class Strategy(ABC):
     def reasons(self, row: pd.Series) -> list[str]:
         """Plain-language explanation for one signal row."""
 
+    def watch(self, df: pd.DataFrame) -> dict | None:
+        """Optional: a setup still forming on the last day (not a signal yet), as a dict of
+        metrics, or None. Strategies without a 'forming' stage keep this default."""
+        return None
+
+    def watch_reasons(self, w: dict) -> list[str]:
+        """Plain-language explanation for one watch() result: what it needs to become a signal."""
+        return []
+
 
 def scale(x, lo: float, hi: float):
     """Linear 0..1 between lo and hi (clipped). Works for scalars and Series."""

@@ -1,5 +1,6 @@
 import { DateSelect, RunScreenButton } from "@/components/Controls";
 import { PickCard } from "@/components/PickCard";
+import { AllSignals, WatchList } from "@/components/ScreenLists";
 import { Card, Empty, PageTitle, Stat } from "@/components/ui";
 import { api, apiOrNull } from "@/lib/api";
 import { day, int, num } from "@/lib/format";
@@ -60,6 +61,24 @@ export default async function PicksPage(props: PageProps<"/">) {
                   ))}
                 </div>
               )}
+              <details className="mt-5 border-t border-line pt-4" open={p.watch.length > 0}>
+                <summary className="cursor-pointer text-sm font-medium">
+                  Setups to watch ({p.watch.length})
+                  <span className="ml-2 font-normal text-muted">not a signal yet: what each needs to trigger, closest first</span>
+                </summary>
+                <div className="mt-3">
+                  <WatchList items={p.watch} profile={p.profile} />
+                </div>
+              </details>
+              <details className="mt-4 border-t border-line pt-4">
+                <summary className="cursor-pointer text-sm font-medium">
+                  All signals ({p.all_signals.length})
+                  <span className="ml-2 font-normal text-muted">every strategy hit, including below the shortlist cut</span>
+                </summary>
+                <div className="mt-3">
+                  <AllSignals signals={p.all_signals} profile={p.profile} />
+                </div>
+              </details>
             </Card>
           ))}
           <p className="text-xs text-muted">{meta.disclaimer}</p>

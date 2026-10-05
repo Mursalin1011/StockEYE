@@ -41,7 +41,7 @@ Then open http://127.0.0.1:3000. Both servers listen on this PC only. Or start t
 
 | Page | What it shows |
 |---|---|
-| Picks | Each day's shortlist per profile: score, strategies, reasons, recent DSE news |
+| Picks | Each day's shortlist per profile: score, strategies, reasons, recent DSE news; **setups to watch** (second breakouts still forming: the close and volume needed, days left) and **all signals** (incl. below the cut, filter by strategy) |
 | Stocks | The universe with key figures and quality pass/fail per profile |
 | Stock page | Candles + signal markers + ex-dates, volume, **RSI(14)**, **MACD(12,26,9)**; fundamentals, shareholding, dividends, news |
 | History | What was picked on each day |
@@ -64,6 +64,8 @@ Every trading day, for each profile (`swing`, `position`):
    - **Base breakout**: the close breaks above a tight N-day range on high volume.
    - **Second breakout** (swing): a breakout fell back into its base (shakeout), then the close clears
      that breakout's high on high volume within 40 days. The MACD filter doesn't apply to it.
+     While a shakeout is waiting for its re-break it shows under **Setups to watch** (about 1 in 3 of
+     those became a second breakout over the 2-year history).
    - **Big hands** (confirmation only): average trade size rising, i.e. fewer, larger trades.
 3. **Ranking**: the best primary strategy score × its weight, +10 per extra strategy that agrees,
    + boosts (e.g. institutional holding rising), − a penalty near record dates (dividend-driven volume).
@@ -199,7 +201,7 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener fundamentals --universe all_equities   # refresh company pages + news
 & $py -m dse_screener actions         # list dividend/bonus events, checked against ex-date opens
 & $py -m dse_screener quality --profile position
-& $py -m dse_screener screen          # run all profiles, saved (add --date, --all-signals)
+& $py -m dse_screener screen          # run all profiles, saved (add --date; --all-signals adds setups to watch)
 & $py -m dse_screener daily --dry-run # the full 3pm job, printing instead of sending
 & $py -m dse_screener report          # preview the summary from stored data (--send to send)
 & $py -m dse_screener backtest --profile swing [--set PATH=VALUE] [--csv trades.csv]

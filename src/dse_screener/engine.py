@@ -15,6 +15,7 @@ from .strategies import REGISTRY, Strategy
 from .universes import universe_codes
 
 SIGNAL_COLUMNS = ["code", "strategy", "title", "role", "score", "weighted", "reasons", "metrics"]
+WATCH_COLUMNS = ["code", "strategy", "title", "reasons", "metrics"]
 
 
 @dataclass
@@ -27,6 +28,7 @@ class ScreenResult:
     excluded: pd.DataFrame              # quality failures: code, failures
     skipped: list[str] = field(default_factory=list)  # no trading on as_of / not enough history
     technical_excluded: dict[str, list[str]] = field(default_factory=dict)  # had signals, failed RSI/MACD rules
+    watch: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=WATCH_COLUMNS))  # setups still forming
 
 
 def build_strategies(profile: Profile) -> list[tuple[Strategy, StrategyConfig]]:
@@ -68,7 +70,7 @@ def evaluate_profile(
     strategies = build_strategies(profile)
     tf_cfg = profile.filters.get("technical")
     as_of_ts = pd.Timestamp(as_of)
-    signals, skipped, tech_notes, tech_excluded = [], [], {}, {}
+    signals, watch, skipped, tech_notes, tech_excluded = [], [], [], {}, {}
     upto = prices[prices["date"] <= as_of_ts]
     by_code = {c: g for c, g in upto.groupby("code", sort=False)}   # one pass, not one scan per stock
     for code in passed:
@@ -95,6 +97,9 @@ def evaluate_profile(
                     "reasons": strat.reasons(row),
                     "metrics": {k: _plain(v) for k, v in row.items() if k not in ("signal", "score")},
                 })
+            elif (w := strat.watch(g)) is not None:
+                watch.append({"code": code, "strategy": strat.name, "title": strat.title,
+                              "reasons": strat.watch_reasons(w), "metrics": {k: _plain(v) for k, v in w.items()}})
         # Technical filter (RSI/MACD) on the signal day: drop this stock's signals if it fails
         # (except those from strategies the filter is exempt for)
         if tf_cfg and tf_cfg.enabled and len(signals) > n_before:
@@ -105,7 +110,11 @@ def evaluate_profile(
     sig = pd.DataFrame(signals, columns=SIGNAL_COLUMNS)
     picks = rank(sig, metrics, profile, _record_dates_near(actions, as_of, profile.ranking.record_date_window_days),
                  tech_notes)
-    return ScreenResult(profile.name, as_of, len(metrics), picks, sig, excluded, skipped, tech_excluded)
+    watch_df = pd.DataFrame(watch, columns=WATCH_COLUMNS)
+    if not watch_df.empty:   # closest to triggering first
+        watch_df = watch_df.sort_values("metrics", key=lambda m: m.map(lambda x: x.get("to_trigger_pct", 0)),
+                                        ignore_index=True)
+    return ScreenResult(profile.name, as_of, len(metrics), picks, sig, excluded, skipped, tech_excluded, watch_df)
 
 
 def _record_dates_near(actions: pd.DataFrame | None, as_of: date, days: int) -> dict[str, date]:

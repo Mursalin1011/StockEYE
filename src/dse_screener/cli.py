@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("screen", help="run profiles: quality filter -> strategies -> ranked shortlist")
     p.add_argument("--profile", action="append", help="profile name (repeatable); default: all profiles")
     p.add_argument("--date", type=_parse_date, help="as-of date (default: latest stored trading day)")
-    p.add_argument("--all-signals", action="store_true", help="also list signals below the shortlist cut")
+    p.add_argument("--all-signals", action="store_true", help="also list signals below the shortlist cut, and setups still forming")
     p.add_argument("--no-save", action="store_true", help="don't store the run in the database")
 
     p = sub.add_parser("daily", help="the 3pm job: wait for data, refresh news, screen, send to Telegram")
@@ -329,6 +329,11 @@ def _print_screen(result, profile, all_signals: bool) -> None:
         print("\n  All signals:")
         for s in result.signals.sort_values("score", ascending=False).itertuples():
             print(f"    {s.code:<11} {s.title:<26} {s.score:5.1f}")
+    if all_signals and not result.watch.empty:
+        print("\n  Setups to watch (not a signal yet):")
+        for w in result.watch.itertuples():
+            print(f"    {w.code:<11} {w.title:<26} needs {w.metrics['trigger']:.1f} "
+                  f"({w.metrics['to_trigger_pct']:+.1f}%), {w.metrics['days_left']} day(s) left")
 
 
 def _deliverer(settings, dry_run: bool):

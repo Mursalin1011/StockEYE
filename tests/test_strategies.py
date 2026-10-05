@@ -161,6 +161,30 @@ def test_second_breakout_cancelled_if_base_breaks_or_too_late():
     assert not SecondBreakout().compute(shakeout(wait=45)).iloc[-1]["signal"]      # beyond 40 days
 
 
+def test_second_breakout_watch_while_waiting():
+    """After the shakeout and before the re-break, the setup shows up on the watch list."""
+    df = shakeout().iloc[:-1]                      # the day before the re-break
+    sb = SecondBreakout()
+    assert not sb.compute(df)["signal"].any()
+    w = sb.watch(df)
+    assert w is not None
+    assert w["failed_high"] == pytest.approx(107.0) and w["trigger"] == pytest.approx(107.0 * 1.01)
+    assert w["first_date"] == df["date"].iloc[60]
+    assert w["days_left"] == 40 - (len(df) - 1 - 60)
+    assert w["to_trigger_pct"] == pytest.approx((107.0 * 1.01 / 100.0 - 1) * 100)
+    assert "Needs a close of 108.1+" in sb.watch_reasons(w)[1]
+
+
+def test_second_breakout_watch_only_for_live_failed_setups():
+    sb = SecondBreakout()
+    assert sb.watch(shakeout()) is None                                  # already triggered: a signal, not a watch
+    assert sb.watch(shakeout(shake=90.0).iloc[:-1]) is None              # base broke
+    assert sb.watch(shakeout(wait=45).iloc[:-1]) is None                 # window closed
+    close = np.r_[flat(60), 105.0, 107.0, np.full(5, 106.0)]             # breakout still holding: nothing failed
+    vol = np.r_[np.full(60, 100_000), 400_000, np.full(6, 100_000)]
+    assert sb.watch(make_df(close, vol)) is None
+
+
 # --- big hands --------------------------------------------------------------
 
 def test_big_hands_fires_when_trades_get_larger():

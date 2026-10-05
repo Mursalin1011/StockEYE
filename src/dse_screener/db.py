@@ -142,6 +142,14 @@ CREATE TABLE IF NOT EXISTS screen_picks (
     reasons     TEXT NOT NULL           -- JSON list
 );
 
+CREATE TABLE IF NOT EXISTS screen_watch (   -- setups still forming (e.g. a second breakout not yet triggered)
+    run_id      INTEGER NOT NULL REFERENCES screen_runs(run_id),
+    code        TEXT NOT NULL,
+    strategy    TEXT NOT NULL,
+    reasons     TEXT NOT NULL,          -- JSON list
+    metrics     TEXT NOT NULL           -- JSON object
+);
+
 CREATE TABLE IF NOT EXISTS research_docs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     sha256      TEXT NOT NULL UNIQUE,
@@ -356,6 +364,11 @@ class Database:
                 [(run_id, i + 1, p.code, p.final_score, json.dumps(p.strategies), json.dumps(p.reasons))
                  for i, p in enumerate(result.picks.itertuples())],
             )
+            self.conn.executemany(
+                "INSERT INTO screen_watch (run_id, code, strategy, reasons, metrics) VALUES (?, ?, ?, ?, ?)",
+                [(run_id, w.code, w.strategy, json.dumps(w.reasons), json.dumps(w.metrics))
+                 for w in result.watch.itertuples()],
+            )
         return run_id
 
     def load_runs(self) -> pd.DataFrame:
@@ -378,6 +391,15 @@ class Database:
         if not run_ids:
             return pd.DataFrame(columns=["run_id", "code", "strategy", "role", "score", "weighted", "reasons", "metrics"])
         q = f"SELECT * FROM screen_signals WHERE run_id IN ({', '.join('?' * len(run_ids))})"
+        df = self._query(q, run_ids)
+        for col in ("reasons", "metrics"):
+            df[col] = df[col].map(json.loads)
+        return df
+
+    def load_run_watch(self, run_ids: list[int]) -> pd.DataFrame:
+        if not run_ids:
+            return pd.DataFrame(columns=["run_id", "code", "strategy", "reasons", "metrics"])
+        q = f"SELECT * FROM screen_watch WHERE run_id IN ({', '.join('?' * len(run_ids))}) ORDER BY rowid"
         df = self._query(q, run_ids)
         for col in ("reasons", "metrics"):
             df[col] = df[col].map(json.loads)

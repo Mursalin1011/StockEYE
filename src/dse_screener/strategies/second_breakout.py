@@ -43,7 +43,9 @@ class SecondBreakout(Strategy):
     def min_history(self) -> int:
         return self.p.base_days + 1
 
-    def compute(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _walk(self, df: pd.DataFrame):
+        """Walk forward through time, one breakout setup at a time (only past rows are used).
+        Returns the second-breakout events and the setup still open on the last day (or None)."""
         p = self.p
         b = breakout_days(df, p.base_days, p.max_base_range_pct, p.min_breakout_pct, p.min_volume_x)
         close = df["close"].to_numpy(dtype=float)
@@ -51,7 +53,6 @@ class SecondBreakout(Strategy):
         is_breakout = b["is_breakout"].to_numpy(dtype=bool)
         base_high, base_low = b["base_high"].to_numpy(dtype=float), b["base_low"].to_numpy(dtype=float)
 
-        # Walk forward through time, one breakout setup at a time (only past rows are used)
         events, setup = [], None
         for i in range(len(df)):
             c = close[i]
@@ -74,6 +75,12 @@ class SecondBreakout(Strategy):
             if setup is None and is_breakout[i]:
                 setup = {"start": i, "pivot": base_high[i], "base_low": base_low[i], "peak": c,
                          "failed": False, "shake_low": np.nan}
+        return events, setup
+
+    def compute(self, df: pd.DataFrame) -> pd.DataFrame:
+        p = self.p
+        close = df["close"].to_numpy(dtype=float)
+        events, _ = self._walk(df)
 
         out = pd.DataFrame(index=df.index)
         out["signal"] = False
@@ -116,4 +123,45 @@ class SecondBreakout(Strategy):
             f"{row.pivot:.1f}, but the base held",
             f"Broke above that breakout's high ({row.failed_high:.1f}) {when} "
             f"on {row.volume_x:.1f}x volume, close {row.rebreak_pct:+.1f}% above it",
+        ]
+
+    def watch(self, df: pd.DataFrame) -> dict | None:
+        """A setup that could become a second breakout: the first breakout failed, the base still
+        holds and the window is still open, but the close hasn't cleared the old high on volume yet."""
+        p = self.p
+        if len(df) < self.min_history:
+            return None
+        _, setup = self._walk(df)
+        last = len(df) - 1
+        days_left = p.window_days - (last - setup["start"]) if setup else 0
+        if setup is None or not setup["failed"] or days_left <= 0:
+            return None
+        close = float(df["close"].iloc[-1])
+        trigger = setup["peak"] * (1 + p.min_rebreak_pct / 100)
+        avg_volume = float(df["volume"].astype(float).iloc[-p.base_days:].mean())
+        dates = df["date"] if "date" in df else pd.Series(pd.NaT, index=df.index)
+        return {
+            "first_date": dates.iloc[setup["start"]],
+            "days_from_first": last - setup["start"],
+            "days_left": days_left,
+            "pivot": setup["pivot"],
+            "failed_high": setup["peak"],
+            "trigger": trigger,
+            "close": close,
+            "to_trigger_pct": (trigger / close - 1) * 100,
+            "shake_low_pct": (setup["shake_low"] / setup["pivot"] - 1) * 100,
+            "floor": setup["base_low"] * (1 - p.max_undercut_pct / 100),
+            "volume_needed": p.min_rebreak_volume_x * avg_volume,
+        }
+
+    def watch_reasons(self, w: dict) -> list[str]:
+        first = f"on {w['first_date']:%d %b}" if pd.notna(w["first_date"]) else \
+            f"{int(w['days_from_first'])} trading days ago"
+        return [
+            f"First breakout {first} failed: fell back to {w['shake_low_pct']:+.1f}% vs the old base high "
+            f"{w['pivot']:.1f}, base still holding",
+            f"Needs a close of {w['trigger']:.1f}+ ({w['to_trigger_pct']:+.1f}% from {w['close']:.1f}) on "
+            f"{self.p.min_rebreak_volume_x:g}x volume (~{w['volume_needed']:,.0f} shares) "
+            f"within {int(w['days_left'])} trading day(s)",
+            f"Cancelled if it closes below {w['floor']:.1f}",
         ]

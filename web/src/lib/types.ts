@@ -29,6 +29,41 @@ export type ProfileScreen = {
   passed_quality: number;
   signals: number;
   picks: Pick[];
+  all_signals: ScreenSignal[];
+  watch: WatchItem[];
+};
+
+/** One strategy hit on the screen day, including those below the shortlist cut. */
+export type ScreenSignal = {
+  code: string;
+  strategy: string;
+  title: string;
+  role: string;
+  score: number;
+  weighted: number;
+  reasons: string[];
+  on_shortlist: boolean;
+};
+
+/** A setup still forming (e.g. a second breakout waiting for its re-break). */
+export type WatchItem = {
+  code: string;
+  strategy: string;
+  title: string;
+  reasons: string[];
+  metrics: {
+    first_date: string;
+    days_from_first: number;
+    days_left: number;
+    pivot: number;
+    failed_high: number;
+    trigger: number;
+    close: number;
+    to_trigger_pct: number;
+    shake_low_pct: number;
+    floor: number;
+    volume_needed: number;
+  };
 };
 
 export type Market = { turnover_cr: number; advances: number; declines: number; unchanged: number; traded: number };
