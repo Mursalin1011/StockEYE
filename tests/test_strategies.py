@@ -261,3 +261,28 @@ def test_v2_options_off_reproduce_the_original_breakout():
     assert sig.sum() >= 8
     assert (new["signal"] == sig).all()
     assert np.allclose(new.loc[sig, "days_since"], since[sig]) and np.allclose(new.loc[sig, "score"], score[sig])
+
+
+def test_dont_chase_drops_breakouts_that_run_away():
+    # base ~100 (high ~100.5), breakout to 103, then 108: 7% above the base, too far with a 4% limit
+    close = np.r_[flat(60), 103.0, 108.0]
+    vol = np.r_[np.full(60, 100_000), 400_000, 300_000]
+    loose = BaseBreakout().compute(make_df(close, vol))
+    tight = BaseBreakout({"max_extension_pct": 4}).compute(make_df(close, vol))
+    assert loose.iloc[-2]["signal"] and loose.iloc[-1]["signal"]
+    assert tight.iloc[-2]["signal"] and not tight.iloc[-1]["signal"]
+    assert tight.iloc[-2]["extension_pct"] == pytest.approx((103 / 100.5 - 1) * 100, abs=0.1)
+    assert "Not extended" in BaseBreakout({"max_extension_pct": 4}).reasons(tight.iloc[-2])[-1]
+
+
+def test_score_points_reweight_and_reward_staying_near_the_base():
+    close_near = np.r_[flat(60), 101.8]                  # just over the 1% minimum
+    close_far = np.r_[flat(60), 106.0]
+    vol = np.r_[np.full(60, 100_000), 400_000]
+    near_only = {"volume_points": 0, "tight_points": 0, "breakout_points": 0, "near_base_points": 100}
+    near = BaseBreakout(near_only).compute(make_df(close_near, vol)).iloc[-1]["score"]
+    far = BaseBreakout(near_only).compute(make_df(close_far, vol)).iloc[-1]["score"]
+    assert near > 70 and far == 0                        # 106 is > strong_breakout_pct (5%) above the base
+    default = BaseBreakout().compute(make_df(close_far, vol)).iloc[-1]["score"]
+    same = BaseBreakout({"volume_points": 50, "tight_points": 30, "breakout_points": 20}).compute(make_df(close_far, vol)).iloc[-1]["score"]
+    assert default == same

@@ -87,6 +87,7 @@ What this says:
 | **W5** ✅ (tested, not adopted) | **Base breakout v2**: optional **volume dry-up** in the base (10-day vol ≤ 0.8× 50-day before the breakout), longer bases (40–90 days), and a "follow-through" option (close above the pivot on 2 of the next 3 days) | PTL's base had volume drying up; filters weak breakouts | Precision up without losing recall |
 | **W6** ✅ (tested, not adopted) | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
 | **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
+| **W9** ✅ (tested, not adopted) | **Base breakout: don't chase + score fix** (docs/06 §11): optional `max_extension_pct` (no signal once the close is more than X% above the base high) and re-weighted score points, incl. a new "near the base" term | Trade lab: the score ranked breakouts backwards (top quartile +0.3% vs +3.2% bottom); entries far above the base did worst | Shortlist beats the current version in both periods |
 | **W8** | **Holdings tracker**: mark "bought PTL @ 53.7" (dashboard or Telegram), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
 
 **Order:** W1 + W2 first (cheap, and they make everything else measurable), then W3 (the biggest lever),
@@ -143,6 +144,52 @@ Against the acceptance criteria (section 4):
 - **Exits:** stop + MA20 smooths swing's 2025 (PF 1.1 → 1.4) at no cost overall, but doesn't change the verdict.
   Slower trailing exits (MA50 / MA100) are worse for both profiles: DSE run-ups pull back hard. Fixed holds stay the default.
 - 2026 has few complete big moves yet (6), so its recall is not meaningful.
+
+### W9: base breakout don't-chase + score fix, 2026-10-05 (tested, not adopted)
+New `base_breakout` options, off by default (signals and scores unchanged; the W5 regression test still passes):
+`max_extension_pct` (signal only while the close is at most X% above the base high) and score points
+`volume_points` / `tight_points` / `breakout_points` (default 50 / 30 / 20) plus `near_base_points` (default 0:
+full points at the base high, none at `strong_breakout_pct` above it). Settings were **chosen on 2025 only**, then
+checked on 2026. Swing quality stocks (71), net of 1%, vs bkt = mean excess over the same-day basket.
+
+**Stage 1, every breakout signal (choose on 2025)**
+
+| Variant | 2025 mean / PF / vs bkt | 2026 mean / PF / vs bkt |
+|---|---|---|
+| current exits (−8% stop, MA20), no limit | +3.6% / 2.5 / −0.2 | +0.7% / 1.2 / −0.3 |
+| … close ≤ 4% above the base (**2025 pick**) | +4.2% / 3.0 / +0.4 | +0.6% / 1.2 / −0.4 |
+| held 60 days, no limit | +7.3% / 3.2 / +0.8 | +1.6% / 1.5 / −0.4 |
+| … close ≤ 4% above the base | +6.9% / 2.9 / +0.5 | +1.6% / 1.5 / −0.6 |
+
+Score rank power on the same signals (rank correlation with the trade's return; current exits): current score
+**−0.16** in 2025 / −0.05 in 2026 (higher-scored half 5.0 points *worse* in 2025). 2025 pick, **F = 0 / 30 / 0 / 70**
+(tight base + near the base, no volume or breakout-size points): **+0.10** in 2025 / **+0.32** in 2026 (higher half
++0.8 / +2.8 points better). Held 60 days the picture is weaker (F +0.03 / +0.16; current −0.16 / +0.03). F keeps the
+same share of signals above the shortlist's 40-point cut (72%).
+
+**Stage 2, swing shortlist backtest (all strategies, ranking, top 10)**
+
+| Variant | 20d mean 2025 / 2026 | 20d PF 2025 / 2026 | 20d vs bkt 2025 / 2026 | stop8_ma20 PF 2025 / 2026 | stop8_ma20 vs bkt 2025 / 2026 | Recall 2025 |
+|---|---|---|---|---|---|---|
+| **current** | +0.3% / +2.1% | 1.1 / 2.1 | **−0.1 / +1.3** | 1.4 / 1.7 | +0.1 / +0.9 | **39%** |
+| score F | +0.8% / +2.0% | 1.3 / 2.1 | +0.5 / +0.8 | **1.6 / 1.9** | **+0.9 / +0.7** | 35% |
+| close ≤ 4% | +0.7% / +2.0% | 1.3 / 2.0 | +0.4 / +0.6 | 1.5 / 1.8 | +0.5 / +0.5 | 37% |
+| score F + close ≤ 4% | same as score F: under F, a close > ~4% above the base already scores below the 40 cut | | | | | |
+
+Shortlist picks that include a base breakout (20d): current −0.0% / +1.7% (win 37% / 51%), score F +1.4% / +1.3%
+(win 39% / 59%). 5-slot breakout portfolio (trade lab, current exits): current −8.7% (2025 −4.9%, 2026 −4.0%),
+score F −3.3% (+5.2% / −8.1%), close ≤ 4% +4.8% (+7.0% / −2.1%); held: +26.3%.
+
+What it says:
+- **Don't chase** helps in 2025 and not in 2026 at every level except the 5-slot portfolio (one path, ~90 trades);
+  it costs recall. Not a rule yet.
+- **Score F fixes the ranking direction** (rank power positive in both years with the current exits) and is better
+  than the current score on every 2025 shortlist number. In 2026 it is a trade-off: higher median, profit factor and
+  win rate, but a lower mean excess over the basket (+1.3 → +0.8) and two fewer big moves caught in 2025 (39% → 35%).
+- With the stop8_ma20 exit, score F is the only variant that meets the docs/05 bar (PF ≥ 1.5 and beats the basket)
+  in both periods; at the 20-day hold none does.
+- **Decision: no change for now** (it doesn't beat the current version on every number in both periods). F is the
+  candidate to re-test as 2026 data grows: `backtest --profile swing --set strategies.base_breakout.params.volume_points=0 ...`.
 
 ### W6: quiet accumulation v2, 2026-10-02 (tested, not adopted)
 New `quiet_accumulation` options, off by default: `range_exclude_days` (judge the price range on the base
