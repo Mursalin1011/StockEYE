@@ -8,7 +8,9 @@ import type { EquityPoint } from "@/lib/types";
 
 const money = (v: number | undefined) => (v === undefined ? "–" : Math.round(v).toLocaleString("en-US"));
 
-export function EquityChart({ points, start, height = 260 }: { points: EquityPoint[]; start: number; height?: number }) {
+export function EquityChart({ points, start, height = 260, labels = { plan: "Plan", hold: "Buy & hold" } }: {
+  points: EquityPoint[]; start: number; height?: number; labels?: { plan: string; hold: string };
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const last = points.at(-1)?.time ?? "";
   const [hover, setHover] = useState(last);
@@ -31,9 +33,9 @@ export function EquityChart({ points, start, height = 260 }: { points: EquityPoi
         handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true },
         localization: { priceFormatter: (p: number) => Math.round(p).toLocaleString("en-US") },
       });
-      const hold = chart.addSeries(LineSeries, { color: v("--ink-2"), lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, title: "Buy & hold" });
+      const hold = chart.addSeries(LineSeries, { color: v("--ink-2"), lineWidth: 2, lineStyle: LineStyle.Dashed, priceLineVisible: false, title: labels.hold });
       hold.setData(points.map((p) => ({ time: p.time as Time, value: p.hold })));
-      const plan = chart.addSeries(LineSeries, { color: v("--s1"), lineWidth: 2, priceLineVisible: false, title: "Plan" });
+      const plan = chart.addSeries(LineSeries, { color: v("--s1"), lineWidth: 2, priceLineVisible: false, title: labels.plan });
       plan.setData(points.map((p) => ({ time: p.time as Time, value: p.plan })));
       plan.createPriceLine({ price: start, color: v("--muted"), lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false, title: "" });
       chart.timeScale().fitContent();
@@ -51,15 +53,15 @@ export function EquityChart({ points, start, height = 260 }: { points: EquityPoi
       mq.removeEventListener("change", rebuild);
       chart.remove();
     };
-  }, [points, start, last]);
+  }, [points, start, last, labels.plan, labels.hold]);
 
   const h = byTime.get(hover) ?? byTime.get(last);
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-2 tabular">
         <span className="font-medium text-ink">{h?.time ?? "–"}</span>
-        <span><span style={{ color: "var(--s1)" }}>━</span> Plan <span className="font-medium text-ink">{money(h?.plan)}</span></span>
-        <span><span className="text-ink-2">┅</span> Buy &amp; hold <span className="font-medium text-ink">{money(h?.hold)}</span></span>
+        <span><span style={{ color: "var(--s1)" }}>━</span> {labels.plan} <span className="font-medium text-ink">{money(h?.plan)}</span></span>
+        <span><span className="text-ink-2">┅</span> {labels.hold} <span className="font-medium text-ink">{money(h?.hold)}</span></span>
         <span className="text-muted">dotted line = starting capital {money(start)}</span>
       </div>
       <div ref={ref} style={{ height }} className="w-full" />

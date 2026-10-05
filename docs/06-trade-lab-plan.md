@@ -1,6 +1,6 @@
 # Trade lab: test your own entry/exit rules on any stock
 
-_Status: v0.3 · 2026-10-02 · phases 1 and 2 done_
+_Status: v0.4 · 2026-10-02 · phases 1–3 done_
 
 ## 1. Why
 
@@ -97,7 +97,7 @@ Per stock, day by day: flat → in a position → flat.
 |---|---|---|
 | **1** | Plan model, column library, simulation engine (strategy / condition / date entries, every exit type), stats, CLI `simulate`, example plans, tests | ✅ 2026-10-02 |
 | **2** | `POST /api/simulate`, `/lab` web page (stock picker, entry/exit builders, chart with entry/exit markers, trade table, save plan), equal-weight basket benchmark (needs all prices; the API already caches them) | ✅ 2026-10-02 |
-| **3** | Same plan over a list or universe; portfolio mode (shared capital, max open positions); parameter grid shown for tuning vs test period; liquidity check (position size vs traded value) | |
+| **3** | Same plan over a list or universe; portfolio mode (shared capital, max open positions); parameter grid shown for tuning vs test period; liquidity check (position size vs traded value) | ✅ 2026-10-02 |
 
 ## 7. Caveats
 
@@ -137,3 +137,31 @@ Per stock, day by day: flat → in a position → flat.
 - Checks: API tests (same PTL 25 Feb 2026 entry as the case study, markers on chart days, readable errors, plan-name
   and overwrite rules); a basket unit test; the form driven in headless Edge (add stocks, add a condition, run, save,
   replace, load a plan).
+
+## 10. Phase 3 results (2026-10-02)
+
+- **Many stocks**: `universe: ds30` (or `all_equities`) adds every stock in a universe; `quality: swing` keeps only
+  those passing that profile's quality filter today. Both warn about the bias they bring (today's list, today's
+  fundamentals).
+- **Shared capital** (`portfolio: {max_positions: 5}`): one pot, at most N positions, each equity / N (capped at the
+  cash left). When more stocks signal than there are free slots, the highest `rank_by` goes first (default: the
+  strategy's score, else `vol_x_20`); the rest are skipped and counted. Compared with the same money split equally
+  over the stocks and held. Tested for no lookahead across stocks.
+- **Liquidity**: every trade's stake vs the stock's 20-day average traded value (`liquidity.max_pct`, default 10%):
+  bigger trades are flagged.
+- **Parameter grid**: `--grid exit.stop_pct=5,8,12 --grid exit.trail_ma=10,20,50` (or the dashboard's grid
+  section, up to 36 combinations): one row per combination with tuning / test trades, mean, win rate, profit factor,
+  vs basket, return and drawdown; heat tables for two parameters; "Open" runs a combination in full. Any plan value
+  works, including a condition's number (`entry.when.1.2`) or a strategy parameter (`entry.params.base_days`).
+  Signals and columns are cached across combinations (9 combinations x 71 stocks: ~8 s).
+
+### First finding: base breakouts as a 5-slot portfolio (swing quality stocks, Jan 2025 → Oct 2026)
+
+| Setting | Tuning (2025) mean / PF | Test (2026) mean / PF | Portfolio | Stocks held |
+|---|---|---|---|---|
+| −8% stop, below MA20 (current) | +0.1% / 1.0 | −1.1% / 0.7 | **−8.5%** (DD −22%) | **+28.0%** (DD −14%) |
+| best of 9 in tuning: −5% stop, MA20 | +1.0% / 1.3 | −1.1% / 0.7 | −0.7% | +28.0% |
+
+All 9 stop × MA settings are flat in 2025 and lose in 2026; 290 signals were skipped for lack of slots. As a
+standalone portfolio with these exits, base breakouts don't beat simply holding the quality stocks. The tuning
+"winner" (−5% stop) is no better in the test period, which is the curve-fitting the grid is meant to expose.

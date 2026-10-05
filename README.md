@@ -132,6 +132,13 @@ Add `--basket swing` to compare each trade with an equal-weight basket of the sw
 The dashboard's **Trade lab** page does the same with a form: build the rules, run, see the trades on the
 chart and the equity curve against buy & hold, and save the plan to `config/plans/`.
 
+Many stocks at once, with shared capital, and a parameter grid (tuning vs test period):
+
+```powershell
+.\.venv\Scripts\python.exe -m dse_screener simulate --plan breakout-swing --universe all_equities --quality swing --portfolio 5 --from 2025-01-01
+.\.venv\Scripts\python.exe -m dse_screener simulate --plan breakout-swing --universe ds30 --portfolio 5 --grid exit.stop_pct=5,8,12 --grid exit.trail_ma=10,20,50
+```
+
 ## AI research review
 
 Broker PDFs (newsflash, market review, monetary policy review, company research) are read by Claude

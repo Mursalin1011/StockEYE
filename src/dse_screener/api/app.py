@@ -391,6 +391,7 @@ def lab_meta(db: Database = Depends(get_db)):
         "plans": plans, "columns": features.catalog(), "operators": list(OPERATORS),
         "strategies": [{"name": n, "title": cls.title} for n, cls in REGISTRY.items()],
         "profiles": list_profiles(settings), "first_date": first, "last_date": last,
+        "universes": sorted(f.stem for f in (CONFIG_DIR / "universes").glob("*.yaml")),
         "default_plan": _plan_json(TradePlan.model_validate({"entry": {"when": ["close > sma_50"]}})),
     }
 
@@ -398,7 +399,44 @@ def lab_meta(db: Database = Depends(get_db)):
 class SimulateBody(BaseModel):
     plan: dict
     basket_profile: str | None = "swing"   # compare with that profile's quality-passing stocks; None = off
-    chart_code: str | None = None          # which stock's chart to return (default: the first)
+    chart_code: str | None = None          # which stock's chart to return (default: the one with the most trades)
+
+
+class SweepBody(BaseModel):
+    plan: dict
+    grid: dict[str, list]                   # plan path -> values, e.g. {"exit.stop_pct": [5, 8, 10]}
+    basket_profile: str | None = "swing"
+
+
+MAX_LAB_STOCKS = 400
+MAX_WEB_COMBOS = 36
+
+
+def _lab_inputs(plan: TradePlan, db: Database) -> tuple[list[str], pd.DataFrame]:
+    """The plan's stocks (codes + universe, quality-filtered) and their adjusted prices."""
+    if not (plan.codes or plan.universe):
+        raise HTTPException(400, "Pick at least one stock or a universe")
+    try:
+        codes = simulate.plan_codes(plan, db, quality_metrics(db) if plan.quality else None)
+    except (OSError, ValueError) as e:
+        raise HTTPException(400, str(e)) from e
+    if not codes:
+        raise HTTPException(400, "No stocks left after the universe / quality filter")
+    if len(codes) > MAX_LAB_STOCKS:
+        raise HTTPException(400, f"{len(codes)} stocks; at most {MAX_LAB_STOCKS} per run")
+    known = set(universe_codes(db))
+    if all(c in known for c in codes):          # the cached all-stock prices cover them
+        p = adjusted_prices(db)
+        return codes, p[p["code"].isin(codes)]
+    return codes, engine.load_adjusted_prices(db, settings, codes)
+
+
+def _basket(profile: str | None, db: Database) -> simulate.Basket | None:
+    if not profile:
+        return None
+    codes = _basket_codes(profile, db)
+    return cached(("basket", profile, _data_version(db)), 600,
+                  lambda: simulate.Basket(adjusted_prices(db), codes, f"{len(codes)} {profile} quality stocks"))
 
 
 def _basket_codes(profile: str, db: Database) -> list[str]:
@@ -410,39 +448,63 @@ def _basket_codes(profile: str, db: Database) -> list[str]:
 def simulate_view(body: SimulateBody, db: Database = Depends(get_db)):
     """Run a trade plan: trades, stats, per-stock results, basket comparison, equity curves, one chart."""
     plan = _validate_plan(body.plan)
-    if not plan.codes:
-        raise HTTPException(400, "Pick at least one stock")
-    if len(plan.codes) > 20:
-        raise HTTPException(400, "At most 20 stocks per run")
-    prices = engine.load_adjusted_prices(db, settings, plan.codes)
+    codes, prices = _lab_inputs(plan, db)
     try:
-        res = simulate.run_plan(plan, prices)
+        res = simulate.run_plan(plan, prices, codes=codes)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    if body.basket_profile and not res.stocks.empty:
-        codes = _basket_codes(body.basket_profile, db)
-        simulate.add_basket(res, adjusted_prices(db), codes, f"{len(codes)} {body.basket_profile} quality stocks")
+    basket = _basket(body.basket_profile, db) if not res.stocks.empty else None
+    if basket is not None:
+        basket.apply(res)
 
     summary = simulate.summarize(res).reset_index() if not res.trades.empty else pd.DataFrame()
     stocks = res.stocks.reset_index() if not res.stocks.empty else pd.DataFrame()
-    # Equity per stock, with buy & hold of the same stock on the same money (first open, marked at each close)
+    if len(stocks):
+        stocks = stocks.sort_values(["trades", "pnl"], ascending=False)
+
+    wanted = (body.chart_code or "").upper()
+    chart_code = wanted if wanted in set(stocks["code"]) else (stocks["code"].iloc[0] if len(stocks) else None)
+    # Equity: the portfolio vs the same money split over its stocks and held; or the chart stock vs holding it
     equity = {}
-    for code, e in res.equity.groupby("code", sort=False):
-        g = prices[(prices["code"] == code) & prices["date"].isin(e["date"])].sort_values("date")
+    if res.portfolio is not None:
+        e = res.equity
+        equity["portfolio"] = [{"time": d.strftime("%Y-%m-%d"), "plan": round(float(v), 2), "hold": round(float(h), 2)}
+                               for d, v, h in zip(e["date"], e["equity"], e["bench"])]
+    elif chart_code:
+        e = res.equity[res.equity["code"] == chart_code]
+        g = prices[(prices["code"] == chart_code) & prices["date"].isin(e["date"])].sort_values("date")
         first = g["open"].iloc[0] if pd.notna(g["open"].iloc[0]) else g["close"].iloc[0]
         hold = plan.capital.start * g["close"].to_numpy(float) / first
-        equity[code] = [{"time": d.strftime("%Y-%m-%d"), "plan": round(float(v), 2), "hold": round(float(h), 2)}
-                        for d, v, h in zip(e["date"], e["equity"], hold)]
-
-    chart_code = (body.chart_code or "").upper() if (body.chart_code or "").upper() in plan.codes else None
-    chart_code = chart_code or (stocks["code"].iloc[0] if len(stocks) else None)
+        equity[chart_code] = [{"time": d.strftime("%Y-%m-%d"), "plan": round(float(v), 2), "hold": round(float(h), 2)}
+                              for d, v, h in zip(e["date"], e["equity"], hold)]
     chart = _lab_chart(db, plan, prices, res, chart_code) if chart_code else None
     return {
-        "plan": _plan_json(plan), "describe": simulate.describe(plan),
+        "plan": _plan_json(plan), "describe": simulate.describe(plan), "codes": codes,
         "trades": records(res.trades), "summary": records(summary), "stocks": records(stocks),
-        "warnings": res.warnings, "pending": res.pending, "basket": res.basket,
+        "warnings": res.warnings, "pending": res.pending, "basket": res.basket, "portfolio": res.portfolio,
         "equity": equity, "chart_code": chart_code, "chart": chart,
     }
+
+
+@app.post("/api/sweep")
+def sweep_view(body: SweepBody, db: Database = Depends(get_db)):
+    """Run the plan once per combination of grid values: one row per combination (see simulate.sweep)."""
+    plan = _validate_plan(body.plan)
+    grid = {k.strip(): v for k, v in body.grid.items() if k.strip() and v}
+    if not grid:
+        raise HTTPException(400, "Give at least one grid path with values")
+    n = 1
+    for v in grid.values():
+        n *= len(v)
+    if n > MAX_WEB_COMBOS:
+        raise HTTPException(400, f"{n} combinations; at most {MAX_WEB_COMBOS} here (the CLI allows {simulate.MAX_COMBOS})")
+    codes, prices = _lab_inputs(plan, db)
+    try:
+        table = simulate.sweep(plan, grid, prices, _basket(body.basket_profile, db), codes=codes)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"plan": _plan_json(plan), "describe": simulate.describe(plan), "grid": grid, "stocks": len(codes),
+            "split": plan.in_sample_until is not None, "rows": records(table)}
 
 
 def _lab_chart(db: Database, plan: TradePlan, prices: pd.DataFrame, res: simulate.LabResult, code: str) -> dict:

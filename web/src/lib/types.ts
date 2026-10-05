@@ -304,6 +304,10 @@ export type PlanJson = {
   hold: { min_days: number; cooldown_days: number };
   costs: { round_trip_pct: number };
   capital: { start: number; per_trade_pct: number };
+  universe: string | null;
+  quality: string | null;
+  portfolio: { max_positions: number; rank_by: string | null; descending: boolean } | null;
+  liquidity: { max_pct: number; days: number };
   in_sample_until: string | null;
 };
 
@@ -319,6 +323,7 @@ export type LabMeta = {
   profiles: string[];
   first_date: string;
   last_date: string;
+  universes: string[];
   default_plan: PlanJson;
 };
 
@@ -337,6 +342,9 @@ export type LabTrade = {
   best_pct: number | null;
   worst_pct: number | null;
   flags: string;
+  stake: number;
+  pnl: number;
+  value_pct: number | null;
   basket_pct?: number | null;
   excess_pct?: number | null;
 };
@@ -367,12 +375,28 @@ export type LabStock = {
   last_close: number;
   buy_hold_pct: number;
   buy_hold_max_dd_pct: number;
-  plan_pct: number;
-  plan_max_dd_pct: number;
   in_market_pct: number;
   trades: number;
   open: number;
+  pnl: number;
+  plan_pct: number | null;
+  plan_max_dd_pct: number | null;
+  end_equity: number | null;
+  basket_hold_pct?: number | null;
+};
+
+/** Shared capital (plan.portfolio): the whole pot vs the same money split over its stocks and held. */
+export type LabPortfolio = {
+  return_pct: number;
+  max_dd_pct: number;
+  bench_pct: number;
+  bench_max_dd_pct: number;
+  avg_positions: number;
+  max_positions: number;
+  in_market_pct: number;
+  skipped: number;
   end_equity: number;
+  stocks: number;
   basket_hold_pct?: number | null;
 };
 
@@ -381,6 +405,8 @@ export type EquityPoint = { time: string; plan: number; hold: number };
 export type LabResultView = {
   plan: PlanJson;
   describe: string[];
+  codes: string[];
+  portfolio: LabPortfolio | null;
   trades: LabTrade[];
   summary: LabSummaryRow[];
   stocks: LabStock[];
@@ -390,4 +416,16 @@ export type LabResultView = {
   equity: Record<string, EquityPoint[]>;
   chart_code: string | null;
   chart: ChartData | null;
+};
+
+/** One parameter-grid combination: the grid values (by path) and the stats (see simulate.sweep). */
+export type SweepRow = Record<string, number | string | null>;
+
+export type SweepView = {
+  plan: PlanJson;
+  describe: string[];
+  grid: Record<string, (number | string)[]>;
+  stocks: number;
+  split: boolean;
+  rows: SweepRow[];
 };

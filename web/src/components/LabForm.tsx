@@ -1,7 +1,7 @@
 "use client";
 
-// Trade lab form: builds a TradePlan (docs/06-trade-lab-plan.md) and puts it in the URL (?p=<json>),
-// so a result is shareable and the server page runs it. Lists (stocks, conditions, buy dates) are
+// Trade lab form: builds a TradePlan (docs/06-trade-lab-plan.md) and puts it in the URL (?p=<json>, plus
+// ?grid=<json> for a parameter grid), so a result is shareable and the server page runs it. Lists (stocks, conditions, buy dates) are
 // state; number fields are read from the form on submit. Saving writes config/plans/<name>.yaml.
 import { useRouter } from "next/navigation";
 import { useState, useTransition, type ReactNode } from "react";
@@ -12,6 +12,15 @@ const button = "rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-sm f
 const primary = "rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60";
 
 type Row = [string, string, string];
+type GridRow = [string, string];
+export type Grid = Record<string, (number | string)[]>;
+
+const GRID_PATHS: [string, string][] = [
+  ["exit.stop_pct", "Stop loss %"], ["exit.target_pct", "Target %"], ["exit.trail_pct", "Trailing stop %"],
+  ["exit.trail_ma", "Close below MA"], ["exit.max_days", "Time limit (days)"], ["hold.min_days", "Can sell after (days)"],
+  ["hold.cooldown_days", "Wait after exit (days)"], ["portfolio.max_positions", "Max positions (shared capital)"],
+];
+const parseValue = (v: string): number | string => (/^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v);
 const toRows = (c: Condition[]): Row[] => c.map(([l, o, r]) => [l, o, String(r)]);
 const opLabel = (op: string) => op.replace("_", " ");
 
@@ -69,7 +78,9 @@ function Chips({ items, onRemove }: { items: string[]; onRemove: (v: string) => 
   );
 }
 
-export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; initial: PlanJson; codes: string[] }) {
+export function LabForm({ meta, initial, codes: universe, initialGrid }: {
+  meta: LabMeta; initial: PlanJson; codes: string[]; initialGrid?: Grid | null;
+}) {
   const router = useRouter();
   const [base, setBase] = useState(initial);
   const [version, setVersion] = useState(0);           // remounts the uncontrolled fields when a plan is loaded
@@ -82,6 +93,14 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
   const [dates, setDates] = useState(initial.entry.dates);
   const [dateDraft, setDateDraft] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [uni, setUni] = useState(initial.universe ?? "");
+  const [shared, setShared] = useState(initial.portfolio !== null);
+  const toGrid = (g?: Grid | null): GridRow[] => {
+    const rows: GridRow[] = Object.entries(g ?? {}).map(([k, v]) => [k, v.join(", ")]);
+    while (rows.length < 2) rows.push(["", ""]);
+    return rows;
+  };
+  const [grid, setGrid] = useState<GridRow[]>(toGrid(initialGrid));
   const [pending, start] = useTransition();
 
   const addCode = (raw: string) => {
@@ -102,6 +121,8 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
     setWhen(toRows(saved.entry.when));
     setWhenAny(toRows(saved.exit.when_any));
     setDates(saved.entry.dates);
+    setUni(saved.universe ?? uni);
+    setShared(saved.portfolio !== null);
     setVersion((v) => v + 1);
     setMsg(null);
   };
@@ -112,8 +133,8 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
     const num = (k: string) => (str(k) === "" ? null : Number(str(k)));
     const pending = codeDraft.trim() ? codeDraft.split(/[\s,]+/).map((c) => c.toUpperCase()).filter((c) => c && !codes.includes(c)) : [];
     const allCodes = [...codes, ...pending];
-    if (!allCodes.length) {
-      setMsg({ ok: false, text: "Pick at least one stock." });
+    if (!allCodes.length && !uni) {
+      setMsg({ ok: false, text: "Pick at least one stock or a universe." });
       return null;
     }
     const rows = (r: Row[]) => r.filter(([l, , v]) => l && v) as Condition[];
@@ -140,6 +161,10 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
       hold: { min_days: num("min_days") ?? 0, cooldown_days: num("cooldown_days") ?? 0 },
       costs: { round_trip_pct: num("cost") ?? 0 },
       capital: { start: num("capital") ?? 100000, per_trade_pct: num("size_pct") ?? 100 },
+      universe: uni || null,
+      quality: str("quality") || null,
+      portfolio: shared ? { max_positions: num("max_positions") ?? 5, rank_by: str("rank_by") || null, descending: true } : null,
+      liquidity: { max_pct: num("liq_pct") ?? 10, days: base.liquidity.days },
       in_sample_until: str("in_sample_until") || null,
     };
   };
@@ -176,9 +201,22 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
         setMsg(null);
         setCodes(plan.codes);
         setCodeDraft("");
-        router.push(`/lab?${new URLSearchParams({ p: JSON.stringify(plan) })}`);
+        const g: Grid = {};
+        for (const [k, v] of grid) {
+          const values = v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean).map(parseValue);
+          if (k.trim() && values.length) g[k.trim()] = values;
+        }
+        const q = new URLSearchParams({ p: JSON.stringify(plan) });
+        if (Object.keys(g).length) q.set("grid", JSON.stringify(g));
+        router.push(`/lab?${q}`);
       }}
     >
+      <datalist id="grid-paths">
+        {GRID_PATHS.map(([p, label]) => <option key={p} value={p}>{label}</option>)}
+        {when.map((r, i) => <option key={`w${i}`} value={`entry.when.${i}.2`}>{`Buy condition: ${r[0]} ${opLabel(r[1])} …`}</option>)}
+        {whenAny.map((r, i) => <option key={`x${i}`} value={`exit.when_any.${i}.2`}>{`Sell condition: ${r[0]} ${opLabel(r[1])} …`}</option>)}
+        {strategy && <option value="entry.params.">{"Strategy parameter: entry.params.<name>"}</option>}
+      </datalist>
       <datalist id="lab-columns">
         {meta.columns.map((c) => <option key={c.name} value={c.example}>{c.windowed ? `${c.name}: ${c.description}` : c.description}</option>)}
       </datalist>
@@ -216,6 +254,18 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
             />
           </div>
         </div>
+        <Label text="Or a universe" hint="Also every stock in this list (today's list: stocks that left it are missing)">
+          <select aria-label="Universe" value={uni} onChange={(e) => setUni(e.target.value)} className={`${field} w-32`}>
+            <option value="">None</option>
+            {meta.universes.map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </Label>
+        <Label text="Quality filter" hint="Keep only stocks passing this profile's quality filter today (uses today's fundamentals)">
+          <select name="quality" defaultValue={base.quality ?? ""} className={`${field} w-28`}>
+            <option value="">None</option>
+            {meta.profiles.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </Label>
         <Label text="From" hint={`First signal day (data from ${meta.first_date})`}>
           <input name="from" type="date" min={meta.first_date} max={meta.last_date} defaultValue={base.from ?? ""} className={field} />
         </Label>
@@ -309,13 +359,47 @@ export function LabForm({ meta, initial, codes: universe }: { meta: LabMeta; ini
             <NumField name="cooldown_days" label="Wait after exit (days)" value={base.hold.cooldown_days} step="1" placeholder="0" />
             <NumField name="cost" label="Round-trip cost %" value={base.costs.round_trip_pct} placeholder="0" hint="Brokerage both sides + charges" />
             <NumField name="capital" label="Starting capital" value={base.capital.start} step="1000" placeholder="100000" />
-            <NumField name="size_pct" label="% of equity per trade" value={base.capital.per_trade_pct} placeholder="100" />
+            {!shared && <NumField name="size_pct" label="% of equity per trade" value={base.capital.per_trade_pct} placeholder="100" />}
             <Label text="Tuning period until" hint="Optional: stats split into tuning (up to here) and test periods">
               <input name="in_sample_until" type="date" defaultValue={base.in_sample_until ?? ""} className={`${field} w-full`} />
             </Label>
+            <NumField name="liq_pct" label="Flag stake above % of traded value" value={base.liquidity.max_pct} placeholder="10"
+              hint={`Flag trades bigger than this % of the stock's ${base.liquidity.days}-day average daily traded value`} />
           </div>
+          <label className="flex items-center gap-2 text-sm" title="One pot for all the stocks instead of separate capital per stock">
+            <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
+            Shared capital across the stocks
+          </label>
+          {shared && (
+            <div className="grid grid-cols-2 gap-2">
+              <NumField name="max_positions" label="Max open positions" value={base.portfolio?.max_positions ?? 5} step="1" placeholder="5"
+                hint="Each position gets equity / this, capped at the cash left" />
+              <Label text="When slots are short, first" hint="Highest first. Default: the strategy's score, else vol_x_20 (volume vs its 20-day average)">
+                <input name="rank_by" list="lab-columns" defaultValue={base.portfolio?.rank_by ?? ""} placeholder={strategy ? "score" : "vol_x_20"} className={`${field} w-full`} />
+              </Label>
+            </div>
+          )}
         </fieldset>
       </div>
+
+      <details className="rounded-lg border border-line p-3" open={grid.some(([k]) => k)}>
+        <summary className="cursor-pointer text-sm font-semibold">Parameter grid <span className="font-normal text-ink-2">(optional: try several values; Run then compares every combination)</span></summary>
+        <div className="mt-3 space-y-2">
+          {grid.map(([k, v], i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2">
+              <input aria-label={`Grid parameter ${i + 1}`} list="grid-paths" value={k} placeholder="e.g. exit.stop_pct"
+                onChange={(e) => setGrid(grid.map((r, j) => (j === i ? [e.target.value.trim(), r[1]] : r)))} className={`${field} w-64`} />
+              <input aria-label={`Grid values ${i + 1}`} value={v} placeholder="e.g. 5, 8, 10"
+                onChange={(e) => setGrid(grid.map((r, j) => (j === i ? [r[0], e.target.value] : r)))} className={`${field} w-48`} />
+              {(k || v) && <button type="button" onClick={() => setGrid(grid.map((r, j) => (j === i ? ["", ""] : r)))} className="text-xs text-ink-2 hover:text-down">clear</button>}
+            </div>
+          ))}
+          <p className="text-xs text-muted">
+            Pick a parameter (or a condition&apos;s number, e.g. entry.when.1.2) and comma-separated values; up to 36 combinations.
+            Set a tuning period above: choose on it, and judge on the test period.
+          </p>
+        </div>
+      </details>
 
       <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
         <Label text="Save as" hint="config/plans/<name>.yaml">

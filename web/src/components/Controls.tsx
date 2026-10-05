@@ -111,3 +111,24 @@ export function StockCodesDatalist({ codes }: { codes: string[] }) {
     </datalist>
   );
 }
+
+/** A select that navigates: picks `param` in the current query (e.g. the trade lab's chart stock). */
+export function ParamSelect({ label, options, value, query, param }: {
+  label: string; options: { value: string; label: string }[]; value: string; query: string; param: string;
+}) {
+  const router = useRouter();
+  return (
+    <select
+      aria-label={label}
+      className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm"
+      value={value}
+      onChange={(e) => {
+        const q = new URLSearchParams(query);
+        q.set(param, e.target.value);
+        router.push(`?${q}`, { scroll: false });
+      }}
+    >
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}

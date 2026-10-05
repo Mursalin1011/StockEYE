@@ -47,7 +47,7 @@ def test_saved_plans_load_and_read_well():
     assert list_plans(), f"expected example plans in {CONFIG_DIR / 'plans'}"
     for name in list_plans():
         plan = load_plan(name)
-        assert len(describe(plan)) == 4
+        assert len(describe(plan)) >= 4
 
 
 # --- columns ---------------------------------------------------------------------
@@ -237,3 +237,71 @@ def test_basket_uses_the_trade_dates_and_only_stocks_that_traded():
     assert res.stocks.loc["AAA", "basket_hold_pct"] == pytest.approx(((60 / 50 - 1) + (99 / 10 - 1)) / 2 * 100 - 1)
     s = summarize(res)
     assert s.loc["all", "mean_excess"] == pytest.approx(-10) and s.loc["all", "beat_basket"] == 0
+
+
+# --- phase 3: shared capital, liquidity, grid ----------------------------------------
+
+def test_portfolio_takes_the_highest_ranked_signals_and_skips_the_rest():
+    prices = pd.concat([_prices(np.full(8, p), code=c) for c, p in (("AAA", 10), ("BBB", 30), ("CCC", 20))])
+    plan = _plan(entry={"dates": [], "when": ["close > 0"]}, exit={"max_days": 2},
+                 portfolio={"max_positions": 2, "rank_by": "close"}, capital={"start": 1000})
+    res = run_plan(plan, prices)
+    assert sorted(res.trades["code"]) == ["BBB", "CCC"]           # highest closes first; AAA had no free slot
+    assert res.portfolio["skipped"] == 1
+    assert (res.trades["stake"] == 500).all()                      # equity / max_positions each
+    eq = res.equity.set_index("date")
+    assert eq["positions"].max() == 2 and eq["equity"].iloc[-1] == pytest.approx(1000)   # flat prices, no cost
+    assert res.portfolio["bench_pct"] == pytest.approx(0)
+
+
+def test_portfolio_reuses_a_slot_after_an_exit_and_compounds():
+    # AAA doubles while held; BBB's later signal gets the freed slot, sized on the grown equity
+    a = _prices([3, 10, 10, 20, 20, 20, 20, 20], code="AAA")     # crosses 4 on row 1: bought at 10, sold at 20
+    b = _prices([3, 3, 3, 3, 5, 6, 6, 6], code="BBB")           # crosses 4 on row 4, after AAA's exit (row 3)
+    plan = _plan(entry={"dates": [], "when": ["close crosses_above 4"]}, exit={"max_days": 2},
+                 portfolio={"max_positions": 1, "rank_by": "close"}, capital={"start": 1000})
+    res = run_plan(plan, pd.concat([a, b]))
+    t = res.trades.set_index("code")
+    assert t.loc["AAA", "stake"] == 1000 and t.loc["AAA", "pnl"] == pytest.approx(1000)
+    assert t.loc["BBB", "stake"] == pytest.approx(2000)            # all of the grown equity, one slot
+    assert res.equity["equity"].iloc[-1] == pytest.approx(2000 + 2000 * (6 / 6 - 1))
+
+
+def test_liquidity_flags_trades_big_for_the_stock():
+    g = _prices(np.full(6, 100.0)).assign(value_mn=0.5)            # BDT 0.5 mn a day
+    res = run_plan(_plan(exit={"max_days": 2}, capital={"start": 100_000}), g)
+    t = res.trades.iloc[0]
+    assert t["value_pct"] == pytest.approx(20) and "average traded value" in t["flags"]
+    assert any("average daily traded value" in w for w in res.warnings)
+
+
+def test_sweep_matches_single_runs_and_reaches_into_conditions():
+    from dse_screener.simulate import sweep
+
+    rng = np.random.default_rng(5)
+    g = _prices(100 * np.exp(np.cumsum(rng.normal(0, 0.02, 300))))
+    plan = _plan(entry={"dates": [], "when": ["close > sma_20", "rsi_14 < 50"]}, exit={"stop_pct": 5, "max_days": 10},
+                 in_sample_until="2025-06-30")
+    grid = {"exit.stop_pct": [3, 8], "entry.when.1.2": [40, 60]}
+    table = sweep(plan, grid, g)
+    assert len(table) == 4 and {"in_trades", "out_trades", "all_pf", "return_pct"} <= set(table.columns)
+    one = run_plan(plan.model_copy(update={"exit": plan.exit.model_copy(update={"stop_pct": 8}),
+                                           "entry": plan.entry.model_copy(update={"when": [("close", ">", "sma_20"), ("rsi_14", "<", 60.0)]})}), g)
+    row = table[(table["exit.stop_pct"] == 8) & (table["entry.when.1.2"] == 60)].iloc[0]
+    assert row["all_trades"] == len(one.trades[one.trades["why"] != "open"])
+    assert row["return_pct"] == pytest.approx(one.stocks["plan_pct"].mean())
+    with pytest.raises(ValueError, match="grid path"):
+        sweep(plan, {"entry.when.5.2": [1]}, g)
+
+
+def test_portfolio_has_no_lookahead_past_the_window_end():
+    rng = np.random.default_rng(11)
+    prices = pd.concat([_prices(100 * np.exp(np.cumsum(rng.normal(0, 0.02, 300))), code=c) for c in ("AAA", "BBB", "CCC", "DDD")])
+    plan = _plan(entry={"dates": [], "when": ["close crosses_above sma_20"]}, exit={"trail_ma": 10, "stop_pct": 6},
+                 portfolio={"max_positions": 2})
+    cut = prices["date"].unique()[200]
+    a = run_plan(plan.model_copy(update={"end": pd.Timestamp(cut).date()}), prices)
+    b = run_plan(plan, prices[prices["date"] <= cut])
+    assert len(a.trades) > 5
+    pd.testing.assert_frame_equal(a.trades, b.trades)
+    pd.testing.assert_frame_equal(a.equity, b.equity)

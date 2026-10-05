@@ -279,7 +279,8 @@ def plan_to_yaml_data(plan: "TradePlan") -> dict:
         data["entry"]["when"] = [condition_str(c) for c in plan.entry.when]
     if plan.exit.when_any:
         data.setdefault("exit", {})["when_any"] = [condition_str(c) for c in plan.exit.when_any]
-    order = ["name", "description", "codes", "from", "to", "entry", "exit", "hold", "costs", "capital", "in_sample_until"]
+    order = ["name", "description", "codes", "universe", "quality", "from", "to", "entry", "exit", "hold", "costs",
+             "capital", "portfolio", "liquidity", "in_sample_until"]
     return {k: data[k] for k in order if k in data}
 
 
@@ -345,8 +346,29 @@ class PlanCapital(BaseModel):
     per_trade_pct: float = Field(100, gt=0, le=100)   # share of current equity put into each trade
 
 
+class PlanPortfolio(BaseModel):
+    """Shared capital across all the plan's stocks: at most max_positions open at once, each equity / max_positions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_positions: int = Field(5, ge=1, le=50)
+    # When more stocks signal than there are free slots: highest first by this. None = the strategy's score if the
+    # entry has a strategy, else vol_x_20. "score" = the strategy's score; anything else = a column (features.py).
+    rank_by: str | None = None
+    descending: bool = True
+
+
+class PlanLiquidity(BaseModel):
+    """Flag trades too big for the stock: stake above max_pct of its average daily traded value."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_pct: float = Field(10, gt=0)
+    days: int = Field(20, ge=1)
+
+
 class TradePlan(BaseModel):
-    """Your own entry/exit rules, tested on one or more stocks (each on its own). config/plans/*.yaml"""
+    """Your own entry/exit rules, tested on stocks (each on its own, or sharing capital). config/plans/*.yaml"""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -360,12 +382,37 @@ class TradePlan(BaseModel):
     hold: PlanHold = PlanHold()
     costs: PlanCosts = PlanCosts()
     capital: PlanCapital = PlanCapital()
+    universe: str | None = None           # also every stock in this universe (config/universes), e.g. ds30
+    quality: str | None = None            # keep only stocks passing this profile's quality filter today
+    portfolio: PlanPortfolio | None = None    # shared capital; None = each stock on its own with its own capital
+    liquidity: PlanLiquidity = PlanLiquidity()
     in_sample_until: date | None = None   # optional: stats split into tuning (up to here) and test periods
+
+    @model_validator(mode="after")
+    def _rank_needs_strategy(self):
+        if self.portfolio and self.portfolio.rank_by == "score" and not self.entry.strategy:
+            raise ValueError("portfolio.rank_by 'score' needs an entry strategy; rank by a column instead, e.g. vol_x_20")
+        return self
 
     @field_validator("codes")
     @classmethod
     def _upper(cls, v: list[str]) -> list[str]:
         return [c.strip().upper() for c in v]
+
+
+def set_plan_value(data: dict, path: str, value) -> None:
+    """data['exit']['stop_pct'] = value for path 'exit.stop_pct'; numbers index lists ('entry.when.1.2')."""
+    node = data
+    *parents, leaf = path.strip().split(".")
+    for key in parents:
+        if isinstance(node, list):
+            node = node[int(key)]
+        else:
+            node = node.setdefault(key, {})
+    if isinstance(node, list):
+        node[int(leaf)] = value
+    else:
+        node[leaf] = value
 
 
 def plan_path(name_or_path: str) -> Path:

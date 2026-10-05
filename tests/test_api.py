@@ -84,3 +84,15 @@ def test_trade_lab_errors_are_readable():
     assert r.status_code == 400 and "unknown column" in r.json()["detail"]
     assert client.post("/api/plans", json={"name": "Bad Name!", "plan": {"entry": {"when": ["close > 1"]}}}).status_code == 400
     assert client.post("/api/plans", json={"name": "ma-pullback", "plan": {"entry": {"when": ["close > 1"]}}}).status_code == 409
+
+
+def test_trade_lab_portfolio_and_grid_over_a_universe():
+    plan = {"entry": {"strategy": "base_breakout", "profile": "swing"}, "exit": {"stop_pct": 8, "trail_ma": 20},
+            "universe": "ds30", "from": "2025-06-01", "portfolio": {"max_positions": 3}, "in_sample_until": "2025-12-31"}
+    d = client.post("/api/simulate", json={"plan": plan}).json()
+    assert len(d["codes"]) > 20 and d["portfolio"]["max_positions"] == 3
+    assert list(d["equity"]) == ["portfolio"] and d["chart_code"] in d["codes"]
+    assert all(t["stake"] > 0 for t in d["trades"])
+    g = client.post("/api/sweep", json={"plan": plan, "grid": {"exit.stop_pct": [5, 10], "portfolio.max_positions": [2, 4]}}).json()
+    assert len(g["rows"]) == 4 and g["split"] and {"in_mean", "out_mean", "return_pct"} <= set(g["rows"][0])
+    assert client.post("/api/sweep", json={"plan": plan, "grid": {"exit.stop_pct": list(range(40))}}).status_code == 400
