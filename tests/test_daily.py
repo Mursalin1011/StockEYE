@@ -7,7 +7,7 @@ from dse_screener.config import load_settings
 from dse_screener.daily import run_daily
 from dse_screener.db import Database
 from dse_screener.notify.telegram import split_message
-from dse_screener.report import to_plain
+from dse_screener.report import market_summary, to_plain
 
 THURSDAY = date(2026, 10, 1)
 
@@ -55,10 +55,16 @@ def env(tmp_path):
     db.close()
 
 
-def _run(env, clock, archive, day=THURSDAY, wait=True):
+def _official(day=THURSDAY):
+    return {"date": day, "trades": 2100, "volume": 50_000, "value_mn": 520.0, "block_trades": 3,
+            "block_volume": 10_000, "block_value_mn": 120.0, "advances": 199, "declines": 201,
+            "unchanged": 0, "issues_traded": 400}
+
+
+def _run(env, clock, archive, day=THURSDAY, wait=True, official=lambda d: False):
     settings, db, sent = env
     return run_daily(settings, db, sent.append, day=day, wait=wait, clock=clock, sleep=clock.sleep,
-                     archive=archive, refresh=lambda codes, d: None)
+                     archive=archive, refresh=lambda codes, d: None, official=official)
 
 
 def _at(t: time, d=THURSDAY):
@@ -78,7 +84,34 @@ def test_waits_for_close_then_retries_until_data(env):
     assert archive.calls == 3                                   # 2 empty, then data
     assert clock.now.time() >= time(14, 55)                     # waited to 14:45, then 2 x 5 min
     assert len(env[2]) == 1 and "DSE Screener" in env[2][0]
-    assert "Turnover ৳40 cr" in to_plain(env[2][0])            # 400 rows x 1 mn = 400 mn = 40 crore
+    # no official totals: 400 rows x 1 mn from the archive, flagged as missing block trades
+    assert "Turnover ৳400.0 mn (৳40 cr, excl. block trades)" in to_plain(env[2][0])
+
+
+def test_turnover_uses_official_totals_with_block_trades(env):
+    clock = FakeClock(_at(time(14, 50)))
+    out = _run(env, clock, FakeArchive(), official=lambda d: env[1].upsert_market_day(_official(d)) or True)
+    assert out.status == "sent"
+    text = to_plain(env[2][0])
+    assert "Turnover ৳520.0 mn (৳52 cr, block ৳120.0 mn)" in text   # not the archive's 400 mn
+    assert "▲ 199  ▼ 201" in text
+
+
+def test_history_totals_give_block_as_the_gap(env):
+    # Summary archive only (no block split, no breadth): block = official - archive sum
+    _, db, _ = env
+    _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), official=lambda d: False)
+    db.upsert_market_days(pd.DataFrame([{"date": THURSDAY, "trades": 2010, "volume": 41_000, "value_mn": 455.5}]))
+    m = market_summary(db, THURSDAY)
+    assert (m["turnover_mn"], m["block_mn"]) == (455.5, 55.5)
+    assert (m["advances"], m["declines"]) == (200, 200)            # from the archive rows
+
+
+def test_waits_for_official_totals_then_falls_back(env):
+    calls = []
+    out = _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), official=lambda d: calls.append(d) or False)
+    assert out.status == "sent" and calls == [THURSDAY] * 3
+    assert "excl. block trades" in to_plain(env[2][0])
 
 
 def test_gives_up_and_notifies_on_holiday(env):

@@ -16,17 +16,41 @@ DISCLAIMER = "Screening output from your own rules. Not investment advice."
 
 
 def market_summary(db: Database, as_of: date) -> dict:
-    """Turnover and breadth for the day across all instruments (raw prices)."""
+    """Turnover and breadth for the day across all instruments.
+
+    Turnover is DSE's official total when stored: the archive rows (daily_prices) leave out block
+    trades, so block = official - archive sum unless DSE's own block total was stored. Without
+    official totals it is the archive sum and block_mn is None. Breadth is DSE's own count when
+    stored, else close vs YCP from the archive (the same rule; it can differ by a G-Sec or two)."""
     day = db.load_prices(start=as_of, end=as_of)
     traded = day[day["volume"].fillna(0) > 0]
     chg = traded["close"] - traded["ycp"]
-    return {
-        "turnover_cr": day["value_mn"].sum() / 10,      # 1 crore = 10 million
+    archive_mn = float(day["value_mn"].sum())
+    out = {
+        "turnover_mn": archive_mn,
+        "block_mn": None,
         "advances": int((chg > 0).sum()),
         "declines": int((chg < 0).sum()),
         "unchanged": int((chg == 0).sum()),
         "traded": len(traded),
     }
+    official = db.load_market_day(as_of)
+    if official and official["value_mn"] is not None:
+        out["turnover_mn"] = official["value_mn"]
+        out["block_mn"] = (official["block_value_mn"] if official["block_value_mn"] is not None
+                           else max(official["value_mn"] - archive_mn, 0.0))
+        if official["advances"] is not None:
+            out.update(advances=official["advances"], declines=official["declines"],
+                       unchanged=official["unchanged"], traded=official["issues_traded"])
+    out["turnover_cr"] = out["turnover_mn"] / 10       # 1 crore = 10 million
+    return out
+
+
+def turnover_text(market: dict) -> str:
+    """Value in mn like DSE prints it, with crore alongside."""
+    block = market.get("block_mn")
+    note = "excl. block trades" if block is None else f"block ৳{block:,.1f} mn"
+    return f"৳{market['turnover_mn']:,.1f} mn (৳{market['turnover_cr']:,.0f} cr, {note})"
 
 
 def recent_news(db: Database, codes: list[str], as_of: date, cfg: ReportConfig) -> dict[str, list[str]]:
@@ -79,7 +103,7 @@ def build_daily_report(
 ) -> str:
     blocks = [
         f"<b>📊 DSE Screener · {as_of:%a %d %b %Y}</b>\n"
-        f"Turnover ৳{market['turnover_cr']:,.0f} cr · ▲ {market['advances']}  ▼ {market['declines']}  "
+        f"Turnover {turnover_text(market)}\n▲ {market['advances']}  ▼ {market['declines']}  "
         f"● {market['unchanged']}"
     ]
     for profile, res in results:

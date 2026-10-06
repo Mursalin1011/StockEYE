@@ -193,6 +193,24 @@ CREATE TABLE IF NOT EXISTS ai_calls (
     scored_at     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS market_daily (   -- DSE's official day totals: unlike daily_prices, include block trades
+    date            TEXT PRIMARY KEY,
+    trades          INTEGER,
+    volume          INTEGER,
+    value_mn        REAL,
+    dsex            REAL,
+    ds30            REAL,
+    market_cap_mn   REAL,
+    block_trades    INTEGER,                -- block columns and breadth: only for days fetched on the day
+    block_volume    INTEGER,
+    block_value_mn  REAL,
+    advances        INTEGER,                -- breadth as DSE counts it (closing price vs YCP)
+    declines        INTEGER,
+    unchanged       INTEGER,
+    issues_traded   INTEGER,
+    fetched_at      TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_at      TEXT NOT NULL,
@@ -276,6 +294,19 @@ class Database:
                          "FROM daily_prices GROUP BY date ORDER BY date")
         df["date"] = pd.to_datetime(df["date"])
         return df
+
+    def upsert_market_days(self, df: pd.DataFrame) -> int:
+        """Partial rows are fine: only the given columns are written."""
+        rows = df.copy()
+        rows["date"], rows["fetched_at"] = rows["date"].astype(str), _now()
+        return self._upsert("market_daily", rows, ["date"])
+
+    def upsert_market_day(self, stats: dict) -> None:
+        self.upsert_market_days(pd.DataFrame([stats]))
+
+    def load_market_day(self, day: date) -> dict | None:
+        df = self._query("SELECT * FROM market_daily WHERE date = ?", [day.isoformat()])
+        return None if df.empty else df.astype(object).where(df.notna(), None).iloc[0].to_dict()
 
     def rows_per_day(self) -> pd.Series:
         df = self._query("SELECT date, COUNT(*) AS n FROM daily_prices GROUP BY date ORDER BY date")

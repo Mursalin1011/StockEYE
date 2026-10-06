@@ -10,11 +10,12 @@ from typing import Callable
 
 import pandas as pd
 
-from . import engine, fundamentals, ingest, quality, report, rules
+from . import engine, fundamentals, ingest, market, quality, report, rules
 from .config import Settings, list_profiles, load_profile
 from .universes import universe_codes
 from .db import Database
-from .sources import DseArchiveSource, DseCompanySource, DseNewsSource, PriceSource
+from .sources import (DseArchiveSource, DseCompanySource, DseMarketStatsSource, DseMarketSummarySource,
+                      DseNewsSource, PriceSource)
 from .sources.http import PoliteClient
 
 log = logging.getLogger(__name__)
@@ -38,9 +39,10 @@ def run_daily(
     sleep: Callable[[float], None] = _time.sleep,
     archive: PriceSource | None = None,
     refresh: Callable[[list[str], date], None] | None = None,
+    official: Callable[[date], bool] | None = None,
 ) -> DailyOutcome:
     """`wait=False` is for re-running a past day: no waiting, no retries.
-    clock/sleep/archive/refresh are injectable for tests."""
+    clock/sleep/archive/refresh/official are injectable for tests."""
     cfg = settings.daily
     clock = clock or (lambda: datetime.now(settings.tz))
     day = day or clock().date()
@@ -51,6 +53,9 @@ def run_daily(
     client = PoliteClient(settings.http, settings.resolve(settings.paths.raw))
     archive = archive or DseArchiveSource(client, settings.sources.dse_archive.base_url)
     refresh = refresh or (lambda codes, d: _refresh(settings, db, client, codes, d))
+    official = official or (lambda d: market.refresh_day(
+        db, DseMarketSummarySource(client, settings.sources.dse_market_summary.base_url),
+        DseMarketStatsSource(client, settings.sources.dse_market.base_url), d))
 
     if wait:
         _sleep_until(clock, sleep, cfg.not_before, "market close + publishing")
@@ -80,6 +85,7 @@ def run_daily(
         results.append((profile, res))
 
     _research_housekeeping(settings, db)
+    _save_official_totals(official, day, retries=2 if wait else 0, sleep=sleep, pause_s=cfg.retry_every_min * 60)
     pick_codes = sorted({c for _, r in results for c in r.picks["code"]})
     text = report.build_daily_report(
         day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
@@ -115,6 +121,20 @@ def _refresh(settings: Settings, db: Database, client: PoliteClient, codes: list
         log.info("Refreshing news for %d quality-passing stocks", len(news_codes))
         fundamentals.refresh_fundamentals(db, company_src, news_src, news_codes, company_pages=False, news=True)
     fundamentals.rebuild_corporate_actions(db, codes)
+
+
+def _save_official_totals(fetch: Callable[[date], bool], day: date, retries: int,
+                          sleep: Callable[[float], None], pause_s: float) -> None:
+    """Store DSE's official day totals (block trades included) for the summary's turnover line.
+    Never blocks the summary: without them the turnover falls back to the archive sum,
+    labelled as excluding block trades."""
+    for attempt in range(retries + 1):
+        if fetch(day):
+            return
+        if attempt < retries:
+            log.info("%s: DSE official totals not published yet, retrying", day)
+            sleep(pause_s)
+    log.warning("%s: no official market totals from DSE, turnover will exclude block trades", day)
 
 
 def _research_housekeeping(settings: Settings, db: Database) -> None:

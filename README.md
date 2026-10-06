@@ -197,6 +197,7 @@ public distribution": they stay in `data/` (git-ignored) and are only sent to th
 $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener backfill        # download all available history (~2 years), resumable
 & $py -m dse_screener ingest          # fetch today (or --date 2026-09-30)
+& $py -m dse_screener market          # DSE's official daily totals (incl. block trades) for the stored history
 & $py -m dse_screener discover        # company pages for new listings (the daily job does this too)
 & $py -m dse_screener fundamentals --universe all_equities   # refresh company pages + news
 & $py -m dse_screener actions         # list dividend/bonus events, checked against ex-date opens

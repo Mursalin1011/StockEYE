@@ -37,6 +37,8 @@ class Sources(BaseModel):
     dse_archive: SourceUrl
     dse_company: SourceUrl
     dse_news: SourceUrl
+    dse_market: SourceUrl = SourceUrl(base_url="https://old.dsebd.org/market-statistics.php")
+    dse_market_summary: SourceUrl = SourceUrl(base_url="https://www.dse.com.bd/api/live/data-archive/market-summary")
 
 
 class IngestConfig(BaseModel):

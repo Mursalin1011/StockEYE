@@ -12,14 +12,15 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from . import backtest, casestudy, daily, engine, features, fundamentals, ingest, quality, report, rules, simulate
+from . import (backtest, casestudy, daily, engine, features, fundamentals, ingest, market, quality, report, rules,
+               simulate)
 from .config import (CONFIG_DIR, Profile, TradePlan, list_plans, list_profiles, load_profile, load_settings,
                      read_plan_data, save_secret, set_plan_value)
 from .universes import universe_codes
 from .notify import TelegramNotifier, find_chat_ids
 from .notify.telegram import TelegramError
 from .db import Database
-from .sources import DseArchiveSource, DseCompanySource, DseNewsSource
+from .sources import DseArchiveSource, DseCompanySource, DseMarketSummarySource, DseNewsSource
 from .sources.http import PoliteClient
 
 log = logging.getLogger("dse_screener")
@@ -41,6 +42,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("ingest", help="fetch one trading day of prices (default: today)")
     p.add_argument("--date", type=_parse_date)
+
+    p = sub.add_parser("market", help="download DSE's official daily totals (incl. block trades) for stored days")
+    p.add_argument("--start", type=_parse_date, help="default: first stored trading day")
+    p.add_argument("--end", type=_parse_date, help="default: today")
 
     p = sub.add_parser("fundamentals", help="fetch company pages + news, rebuild corporate actions")
     p.add_argument("--universe", default="all_equities")
@@ -217,6 +222,14 @@ def cmd_ingest(args, settings, db) -> int:
     rows, complete = ingest.ingest_day(db, source, settings, day)
     print(f"{day}: {rows} rows ({'complete' if complete else 'INCOMPLETE or no trading'})")
     return 0 if complete else 2
+
+
+def cmd_market(args, settings, db) -> int:
+    source = DseMarketSummarySource(_client(settings), settings.sources.dse_market_summary.base_url)
+    start = args.start or date.fromisoformat(db.date_range()[0])
+    rows = market.backfill(db, source, start, args.end or settings.today(), settings.ingest.chunk_days)
+    print(f"Official totals stored for {rows} trading days")
+    return 0
 
 
 def cmd_fundamentals(args, settings, db) -> int:
@@ -912,6 +925,7 @@ def cmd_status(args, settings, db) -> int:
 COMMANDS = {
     "backfill": cmd_backfill,
     "ingest": cmd_ingest,
+    "market": cmd_market,
     "fundamentals": cmd_fundamentals,
     "discover": cmd_discover,
     "actions": cmd_actions,

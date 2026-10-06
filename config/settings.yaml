@@ -19,6 +19,10 @@ sources:
     base_url: https://old.dsebd.org/displayCompany.php
   dse_news:
     base_url: https://old.dsebd.org/old_news.php
+  dse_market:                # official day totals (incl. block trades) + breadth, latest day only
+    base_url: https://old.dsebd.org/market-statistics.php
+  dse_market_summary:        # official day totals + DSEX/DS30 per day, last ~2 years
+    base_url: https://www.dse.com.bd/api/live/data-archive/market-summary
 
 ingest:
   backfill_years: 2        # DSE archive keeps a rolling ~2-year window

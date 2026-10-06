@@ -66,7 +66,8 @@ export type WatchItem = {
   };
 };
 
-export type Market = { turnover_cr: number; advances: number; declines: number; unchanged: number; traded: number };
+// block_mn is null when DSE's official totals weren't fetched: turnover then excludes block trades
+export type Market = { turnover_mn: number; turnover_cr: number; block_mn: number | null; advances: number; declines: number; unchanged: number; traded: number };
 
 export type Screen = { as_of: string; market: Market; profiles: ProfileScreen[] };
 

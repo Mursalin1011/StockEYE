@@ -32,7 +32,10 @@ export default async function PicksPage(props: PageProps<"/">) {
         <div className="space-y-6">
           <Card>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Stat label="Market turnover" value={`৳${num(screen.market.turnover_cr, 0)} cr`} />
+              <Stat
+                label={screen.market.block_mn == null ? "Turnover (excl. block)" : "Market turnover"}
+                value={`৳${num(screen.market.turnover_mn, 1)} mn`}
+              />
               <Stat label="Advances" value={<span className="text-up">▲ {int(screen.market.advances)}</span>} />
               <Stat label="Declines" value={<span className="text-down">▼ {int(screen.market.declines)}</span>} />
               <Stat label="Unchanged" value={`● ${int(screen.market.unchanged)}`} />
