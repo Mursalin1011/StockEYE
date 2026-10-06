@@ -304,8 +304,11 @@ class Database:
     def upsert_market_day(self, stats: dict) -> None:
         self.upsert_market_days(pd.DataFrame([stats]))
 
-    def load_market_day(self, day: date) -> dict | None:
-        df = self._query("SELECT * FROM market_daily WHERE date = ?", [day.isoformat()])
+    def load_market_day(self, day: date, before: bool = False) -> dict | None:
+        """The stored day, or with before=True the latest stored day before it."""
+        sql = ("SELECT * FROM market_daily WHERE date < ? ORDER BY date DESC LIMIT 1" if before
+               else "SELECT * FROM market_daily WHERE date = ?")
+        df = self._query(sql, [day.isoformat()])
         return None if df.empty else df.astype(object).where(df.notna(), None).iloc[0].to_dict()
 
     def rows_per_day(self) -> pd.Series:

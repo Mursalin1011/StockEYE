@@ -7,7 +7,7 @@ from dse_screener.config import load_settings
 from dse_screener.daily import run_daily
 from dse_screener.db import Database
 from dse_screener.notify.telegram import split_message
-from dse_screener.report import market_summary, to_plain
+from dse_screener.report import index_text, market_summary, to_plain
 
 THURSDAY = date(2026, 10, 1)
 
@@ -134,3 +134,15 @@ def test_split_message_keeps_blocks_together():
     assert len(parts) > 1 and all(len(p) <= 1000 for p in parts)
     assert all(p.count("<b>") == p.count("</b>") for p in parts)
     assert "".join(p.replace("\n", "") for p in parts) == "".join(b.replace("\n", "") for b in blocks)
+
+
+def test_index_line_with_change_from_previous_day(env):
+    _, db, _ = env
+    _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), official=lambda d: False)
+    assert "DSEX" not in to_plain(env[2][0])                   # no index data stored: line left out
+    db.upsert_market_days(pd.DataFrame([
+        {"date": THURSDAY - timedelta(days=3), "value_mn": 500.0, "dsex": 5000.0, "ds30": 2000.0},
+        {"date": THURSDAY, "value_mn": 520.0, "dsex": 5050.0, "ds30": 1990.0},
+    ]))
+    m = market_summary(db, THURSDAY)
+    assert index_text(m) == "DSEX 5,050.0 (+50.0, +1.00%) · DS30 1,990.0 (-10.0, -0.50%)"

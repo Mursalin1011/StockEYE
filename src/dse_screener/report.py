@@ -21,7 +21,8 @@ def market_summary(db: Database, as_of: date) -> dict:
     Turnover is DSE's official total when stored: the archive rows (daily_prices) leave out block
     trades, so block = official - archive sum unless DSE's own block total was stored. Without
     official totals it is the archive sum and block_mn is None. Breadth is DSE's own count when
-    stored, else close vs YCP from the archive (the same rule; it can differ by a G-Sec or two)."""
+    stored, else close vs YCP from the archive (the same rule; it can differ by a G-Sec or two).
+    DSEX/DS30 and their change from the previous stored day: None when not stored."""
     day = db.load_prices(start=as_of, end=as_of)
     traded = day[day["volume"].fillna(0) > 0]
     chg = traded["close"] - traded["ycp"]
@@ -35,6 +36,12 @@ def market_summary(db: Database, as_of: date) -> dict:
         "traded": len(traded),
     }
     official = db.load_market_day(as_of)
+    prev = db.load_market_day(as_of, before=True)
+    for idx in ("dsex", "ds30"):
+        now, then = (official or {}).get(idx), (prev or {}).get(idx)
+        out[idx] = now
+        out[f"{idx}_chg"] = now - then if now is not None and then is not None else None
+        out[f"{idx}_pct"] = out[f"{idx}_chg"] / then * 100 if out[f"{idx}_chg"] is not None else None
     if official and official["value_mn"] is not None:
         out["turnover_mn"] = official["value_mn"]
         out["block_mn"] = (official["block_value_mn"] if official["block_value_mn"] is not None
@@ -44,6 +51,19 @@ def market_summary(db: Database, as_of: date) -> dict:
                        unchanged=official["unchanged"], traded=official["issues_traded"])
     out["turnover_cr"] = out["turnover_mn"] / 10       # 1 crore = 10 million
     return out
+
+
+def index_text(market: dict) -> str | None:
+    """'DSEX 5,424.9 (-20.4, -0.37%) · DS30 2,077.1 (-4.7, -0.22%)', None without index data."""
+    parts = []
+    for idx in ("dsex", "ds30"):
+        if market.get(idx) is None:
+            continue
+        part = f"{idx.upper()} {market[idx]:,.1f}"
+        if market.get(f"{idx}_chg") is not None:
+            part += f" ({market[f'{idx}_chg']:+,.1f}, {market[f'{idx}_pct']:+.2f}%)"
+        parts.append(part)
+    return " · ".join(parts) or None
 
 
 def turnover_text(market: dict) -> str:
@@ -101,9 +121,11 @@ def build_daily_report(
     news: dict[str, list[str]],
     cfg: ReportConfig,
 ) -> str:
+    indices = index_text(market)
     blocks = [
         f"<b>📊 DSE Screener · {as_of:%a %d %b %Y}</b>\n"
-        f"Turnover {turnover_text(market)}\n▲ {market['advances']}  ▼ {market['declines']}  "
+        + (f"{indices}\n" if indices else "")
+        + f"Turnover {turnover_text(market)}\n▲ {market['advances']}  ▼ {market['declines']}  "
         f"● {market['unchanged']}"
     ]
     for profile, res in results:
