@@ -24,8 +24,9 @@ const SHAPE: Record<string, "circle" | "arrowUp" | "square"> = {
   base_breakout: "arrowUp",
   big_hands: "square",
   second_breakout: "arrowUp",
+  ma_cross: "arrowUp",
 };
-const SLOT: Record<string, string> = { quiet_accumulation: "--s1", base_breakout: "--s2", big_hands: "--s3", second_breakout: "--s2" };
+const SLOT: Record<string, string> = { quiet_accumulation: "--s1", base_breakout: "--s2", big_hands: "--s3", second_breakout: "--s2", ma_cross: "--s3" };
 
 function tokens() {
   const s = getComputedStyle(document.documentElement);

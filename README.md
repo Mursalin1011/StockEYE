@@ -77,7 +77,7 @@ All numbers are in YAML, so no code changes are needed:
 
 | File | What it controls |
 |---|---|
-| `config/profiles/swing.yaml`, `position.yaml` | quality rules, strategy parameters and weights, ranking, backtest settings |
+| `config/profiles/swing.yaml`, `position.yaml`, `trend.yaml` | quality rules, strategy parameters and weights, ranking, backtest settings (`trend`: the 20/50 golden cross list, docs/05 W10) |
 | `config/plans/*.yaml` | trade lab plans: your own entry/exit rules for `simulate` |
 | `config/settings.yaml` | data sources, the daily job (times, retries), Telegram summary, adjustments |
 | `config/universes/all_equities.yaml` | default universe: every active DSE equity (resolved from stored company pages, so new listings join automatically); `ds30.yaml` is the blue-chip list |

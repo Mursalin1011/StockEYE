@@ -5,6 +5,7 @@ import pytest
 from dse_screener.strategies import REGISTRY
 from dse_screener.strategies.base_breakout import BaseBreakout
 from dse_screener.strategies.big_hands import BigHands
+from dse_screener.strategies.ma_cross import MaCross
 from dse_screener.strategies.quiet_accumulation import QuietAccumulation
 from dse_screener.strategies.second_breakout import SecondBreakout
 
@@ -286,3 +287,79 @@ def test_score_points_reweight_and_reward_staying_near_the_base():
     default = BaseBreakout().compute(make_df(close_far, vol)).iloc[-1]["score"]
     same = BaseBreakout({"volume_points": 50, "tight_points": 30, "breakout_points": 20}).compute(make_df(close_far, vol)).iloc[-1]["score"]
     assert default == same
+
+
+# --- MA cross ---------------------------------------------------------------
+
+def _golden_cross(days_after=0, vol_after=200_000.0):
+    """60 days drifting down 100 -> 94, then a steady climb: MA20 crosses above MA50 during the climb."""
+    close = np.r_[np.linspace(100, 94, 60), np.linspace(94.5, 110, 40 + days_after)]
+    vol = np.r_[np.full(60, 100_000.0), np.full(40 + days_after, vol_after)]
+    return make_df(close, vol)
+
+
+def test_ma_cross_fires_on_the_cross_day_with_volume():
+    df = _golden_cross()
+    out = MaCross({"max_days_since": 0}).compute(df)
+    days = np.flatnonzero(out["signal"])
+    assert len(days) == 1
+    c = df["close"]
+    f, s = c.rolling(20).mean(), c.rolling(50).mean()
+    i = days[0]
+    assert f[i] > s[i] and f[i - 1] <= s[i - 1]                  # the cross day itself
+    row = out.iloc[i]
+    assert row["volume_ratio"] > 1 and row["score"] >= 50
+    assert "MA20 crossed above MA50 today" in MaCross().reasons(row)[0]
+
+
+def test_ma_cross_needs_volume_support_unless_off():
+    df = _golden_cross(vol_after=100_000.0)                       # volume flat: ratio 1.0, not above it
+    assert not MaCross().compute(df)["signal"].any()
+    assert MaCross({"min_volume_ratio": None}).compute(df)["signal"].any()
+
+
+def test_ma_cross_carries_forward_with_a_decaying_score():
+    out = MaCross({"max_days_since": 2}).compute(_golden_cross(days_after=5))
+    days = np.flatnonzero(out["signal"])
+    assert len(days) == 3 and list(out["days_since"].iloc[days]) == [0, 1, 2]
+    assert out["score"].iloc[days[0]] > out["score"].iloc[days[2]]
+
+
+def test_ma_cross_trend_filter_for_the_fast_cross():
+    # Downtrend with a bounce: MA10 crosses above MA20, but MA20 stays below MA50
+    close = np.r_[np.linspace(120, 90, 70), np.linspace(90, 96, 15)]
+    vol = np.r_[np.full(70, 100_000.0), np.full(15, 200_000.0)]
+    df = make_df(close, vol)
+    fast = {"fast": 10, "slow": 20, "require_close_above_slow": False}
+    assert MaCross(fast).compute(df)["signal"].any()
+    assert not MaCross({**fast, "trend_ma": 50}).compute(df)["signal"].any()
+
+
+def test_ma_cross_matches_the_trade_lab_conditions():
+    """Plugin signal days (no carry-forward) = the golden-cross plan's conditions, on a random walk."""
+    from dse_screener.config import TradePlan
+    from dse_screener.features import Columns
+
+    rng = np.random.default_rng(3)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, 0.02, 1000)))
+    df = make_df(close, rng.integers(50_000, 300_000, 1000))
+    when = TradePlan.model_validate({"entry": {"when": ["sma_20 crosses_above sma_50", "close > sma_50",
+                                                        "avg_vol_10 > avg_vol_50"]}}).entry.when
+    cols = Columns(df)
+    lab = cols.all_true(when)
+    assert lab.sum() >= 2
+    assert (MaCross({"max_days_since": 0}).compute(df)["signal"] == lab).all()
+    bare = cols.all_true(when[:1])                                # the cross alone
+    assert bare.sum() > lab.sum()
+    out = MaCross({"max_days_since": 0, "min_volume_ratio": None, "require_close_above_slow": False}).compute(df)
+    assert (out["signal"] == bare).all()
+
+
+def test_ma_cross_watch_when_a_cross_is_close():
+    df = _golden_cross()
+    out = MaCross().compute(df)
+    i = int(np.flatnonzero(out["signal"])[0])
+    w = MaCross().watch(df.iloc[:i])                              # the day before the cross
+    assert w is not None and -1.5 <= w["gap_pct"] < 0
+    assert "below MA50" in MaCross().watch_reasons(w)[0]
+    assert MaCross().watch(df) is None                            # already crossed

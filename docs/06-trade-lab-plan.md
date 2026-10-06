@@ -226,3 +226,52 @@ score points, chosen on 2025 and checked on 2026 at three levels (every signal, 
   mean excess, slightly lower recall). Not adopted yet; the candidate to re-test as data grows.
 - Neither fixes the portfolio's real problem from §11: the −8% stop + MA20 exit churn and its costs.
 
+
+## 13. Moving-average crosses: 10/20 and 20/50 in an uptrend, with volume support (2026-10-06)
+
+Plans: `golden-cross` (20/50) and `ma-cross-fast` (10/20) in `config/plans/`. Jan 2025 → Oct 2026, next-open fills,
+1% round trip, 2-day settlement; 2025 = tuning, 2026 = test. Two universes: the 71 swing quality stocks and DS30.
+
+| Version | Buy when |
+|---|---|
+| A | MA10 crosses above MA20 |
+| B | A + uptrend (MA20 > MA50, close > MA50) |
+| C | B + volume support (10-day average volume > 50-day) |
+| C2 | B + volume spike on the cross day (volume ≥ 1.5× its 20-day average) |
+| D | MA20 crosses above MA50 (golden cross) |
+| E | D + close > MA50 + volume support |
+
+**Every signal, fixed 20-day hold** (mean net %, PF, mean vs the basket on the same dates; 2025 / 2026):
+
+| | 71 swing: mean | PF 25 / 26 | vs basket 25 / 26 | DS30: mean | PF 25 / 26 | vs basket 25 / 26 |
+|---|---|---|---|---|---|---|
+| A 10/20 | +0.5 (613) | 1.0 / 1.7 | −0.1 / +0.2 | +0.7 (238) | 0.8 / 3.6 | +0.1 / +0.5 |
+| B + uptrend | −0.2 (241) | 0.7 / 1.3 | +0.2 / +0.1 | +0.5 (77) | 0.2 / 4.3 | +0.8 / +1.7 |
+| C + volume | +0.9 (112) | 0.9 / 2.5 | +0.3 / +1.1 | +1.1 (29) | 0.1 / 9.0 | −0.6 / +2.6 |
+| C2 + spike | −0.8 (107) | 0.6 / 1.0 | −0.3 / −1.8 | −0.3 (25) | 0.1 / 6.8 | +0.1 / −0.4 |
+| **D 20/50** | **+3.5 (279)** | **2.7 / 3.6** | **+0.5 / +1.1** | +3.6 (118) | 2.6 / 7.0 | +0.7 / +0.3 |
+| **E + volume** | +3.6 (179) | 2.5 / 2.7 | +0.3 / +1.1 | **+4.7 (65)** | **3.4 / 5.7** | **+2.2 / +1.1** |
+| base breakout (swing) | +1.9 (301) | 2.0 / 1.4 | −0.2 / +0.6 | +2.4 (113) | 1.9 / 2.4 | −0.2 / +1.0 |
+
+- **10/20 crosses have no edge.** About the basket in both universes; with their own exit (MA10 < MA20) 35% of trades
+  end within 10 days, 66% lose, and 724 round trips in 21 months on 71 stocks. Volume support (C) helps a little (+0.7
+  vs basket) but fails PF in 2025 and beats only 83–90% of random entry days.
+- **20/50 golden crosses pass the per-signal bar** (mean vs basket > 0 and PF ≥ 1.5 in both years, docs/05 §4) on both
+  universes: the first MA rule here to do so, and better than base breakouts on the same harness. Most of the raw
+  return is the market (crosses cluster in rallies); the edge is +0.5 to +2 points per 20-day trade. At 60 days, E beats
+  83–87% of random-entry runs (not 95%).
+- **Volume:** a sustained rise (10-day > 50-day) helps on DS30 (+0.7 → +1.6 vs basket) and the 10/20 cross; a one-day
+  spike hurts everywhere (as with base breakouts, §11).
+- **Exits:** the reverse cross (MA20 < MA50) gives the edge back on the 71 stocks (−0.4 / −0.9 vs basket, median −0.3%,
+  held ~53 days). Fixed 20–60-day holds work better. The −8% stop + MA20 exit is worse again.
+- **Late:** golden crosses come a median 30 days after a big move starts, with the price ~9% above its 20-day low.
+  Recall on big winners (≥ +50% in 120 days, 39 moves): D 85% at 8.5 signals per catch, E 56% at 8.3, base breakout
+  69% at 11.2. None meets ≤ 3 signals per catch.
+- **Portfolio (shared capital):** sensitive to slots and ranking (3/5/10 slots × rank by vol_x_20 / lowest ret_20).
+  71 stocks: no MA version reliably beats holding them (+26.3%); E with the reverse-cross exit loses in all 6 settings.
+  DS30: E beats holding (+19.0%) in 15 of 18 settings (median +44% with 20-day holds, ~65 trades). Few trades; treat as a lead.
+- Caveats: ~21 months; today's quality list and today's DS30 (look-ahead, survivorship).
+
+**Verdict:** drop the 10/20 cross as a buy signal. The 20/50 golden cross with volume support and a fixed ~20-day hold is
+the candidate: a confirming strategy for the shortlist or a DS30 timing rule, re-checked as data grows. Built as the
+`ma_cross` strategy (off by default); shortlist backtest results in docs/05, W10.

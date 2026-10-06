@@ -71,6 +71,7 @@ export const STRATEGY_STYLE: Record<string, { color: string; shape: string }> = 
   base_breakout: { color: "var(--s2)", shape: "▲" },
   big_hands: { color: "var(--s3)", shape: "■" },
   second_breakout: { color: "var(--s2)", shape: "▲▲" },
+  ma_cross: { color: "var(--s3)", shape: "✕" },
 };
 
 export function StrategyChip({ name, title }: { name: string; title: string }) {

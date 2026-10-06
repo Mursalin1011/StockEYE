@@ -1,0 +1,26 @@
+# Trade lab plan (docs/06-trade-lab-plan.md §13): 20/50 golden cross with volume support.
+#   .\.venv\Scripts\python.exe -m dse_screener simulate --plan golden-cross --universe all_equities --quality swing --basket swing
+# 2-year check (Jan 2025 -> Oct 2026, 1% round trip): the only MA-cross version with an edge over the basket in both
+# years. Fixed holds beat the reverse-cross exit; the reverse cross gives the edge back on the 71 swing stocks.
+name: golden-cross
+description: MA20 crosses above MA50, close above MA50, 10-day volume above its 50-day average; hold 20 days.
+codes: [PTL]
+
+entry:
+  when:
+    - sma_20 crosses_above sma_50
+    - close > sma_50
+    - avg_vol_10 > avg_vol_50      # volume support: the last two weeks busier than the last ten
+  fill: next_open
+  new_signal_only: true
+
+exit:
+  max_days: 20                    # alternatives tested: 60 days; `when_any: [sma_20 < sma_50]` (worse)
+
+hold:
+  min_days: 2
+  cooldown_days: 0
+
+costs: { round_trip_pct: 1.0 }
+capital: { start: 100000, per_trade_pct: 100 }
+in_sample_until: 2025-12-31

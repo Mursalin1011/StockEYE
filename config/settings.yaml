@@ -36,7 +36,7 @@ daily:
   company_pages_per_day: 60    # spread over the week so the 3pm job stays fast (stalest first)
 
 report:
-  profiles: [swing, position]  # which profiles run daily, in this order
+  profiles: [swing, position, trend]  # which profiles run daily, in this order
   news_lookback_days: 14       # news shown under each pick
   max_news_per_pick: 2
   max_reasons_per_pick: 4

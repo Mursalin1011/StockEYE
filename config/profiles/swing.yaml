@@ -76,6 +76,18 @@ strategies:
       window_days: 40          # second breakout within 40 trading days of the first
       min_rebreak_volume_x: 2.0
       max_days_since: 2
+  ma_cross:
+    enabled: false
+    weight: 1.0
+    # MA cross in an uptrend with volume support (docs/06 §13): default = 20/50 golden cross, close above MA50,
+    # 10-day volume above its 50-day average. fast: 10, slow: 20, trend_ma: 50 = the 10/20 cross (no edge found).
+    params:
+      fast: 20
+      slow: 50
+      vol_short_days: 10
+      vol_baseline_days: 50
+      min_volume_ratio: 1.0
+      max_days_since: 2
   big_hands:
     weight: 0.7
     # 2-year check: on its own, no better than a random day (larger trades can be selling too).

@@ -4,11 +4,12 @@ its parameters then become configurable in config/profiles/*.yaml."""
 from .base import Strategy
 from .base_breakout import BaseBreakout
 from .big_hands import BigHands
+from .ma_cross import MaCross
 from .quiet_accumulation import QuietAccumulation
 from .second_breakout import SecondBreakout
 
 REGISTRY: dict[str, type[Strategy]] = {
-    cls.name: cls for cls in (QuietAccumulation, BaseBreakout, BigHands, SecondBreakout)
+    cls.name: cls for cls in (QuietAccumulation, BaseBreakout, BigHands, SecondBreakout, MaCross)
 }
 
 __all__ = ["REGISTRY", "Strategy"]

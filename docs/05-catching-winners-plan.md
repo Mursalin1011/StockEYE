@@ -88,6 +88,7 @@ What this says:
 | **W6** ✅ (tested, not adopted) | **Quiet accumulation v2**: measure the price range on the base *before* the last 5 days, so a breakout doesn't disqualify an accumulation; "accumulation, then breakout" as a confluence | Missed PTL in Feb by 1.4% of range | Recall up on quality winners; precision stable |
 | **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
 | **W9** ✅ (tested, not adopted) | **Base breakout: don't chase + score fix** (docs/06 §11): optional `max_extension_pct` (no signal once the close is more than X% above the base high) and re-weighted score points, incl. a new "near the base" term | Trade lab: the score ranked breakouts backwards (top quartile +0.3% vs +3.2% bottom); entries far above the base did worst | Shortlist beats the current version in both periods |
+| **W10** ✅ (own `trend` list) | **MA cross** (`ma_cross`): 20/50 golden cross, close above MA50, 10-day volume above its 50-day average (docs/06 §13) | Trade lab: the only MA rule with an edge over the basket in both years, per signal | Shortlist beats the current version in both periods |
 | **W8** | **Holdings tracker**: mark "bought PTL @ 53.7" (dashboard or Telegram), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
 
 **Order:** W1 + W2 first (cheap, and they make everything else measurable), then W3 (the biggest lever),
@@ -144,6 +145,50 @@ Against the acceptance criteria (section 4):
 - **Exits:** stop + MA20 smooths swing's 2025 (PF 1.1 → 1.4) at no cost overall, but doesn't change the verdict.
   Slower trailing exits (MA50 / MA100) are worse for both profiles: DSE run-ups pull back hard. Fixed holds stay the default.
 - 2026 has few complete big moves yet (6), so its recall is not meaningful.
+
+### W10: MA cross strategy (`ma_cross`), 2026-10-06 (adopted as its own `trend` list)
+New strategy `src/dse_screener/strategies/ma_cross.py`, in both profiles with `enabled: false` (the daily screen is
+unchanged). Default = the trade lab's `golden-cross` plan: MA20 crosses above MA50, close above MA50, 10-day average
+volume above the 50-day average; the signal shows for `max_days_since` days while MA20 stays above MA50 and the close
+above it. `fast: 10, slow: 20, trend_ma: 50` gives the 10/20 cross in an uptrend. Score: 50 for a valid cross, up to 25
+for volume (ratio 1 → 2), up to 25 for a close near MA50 (0 → 10% above), −5 per day since the cross. `watch()` lists
+stocks whose MA20 is within 1.5% below MA50 and rising. With `max_days_since: 0` its signal days are identical to the
+trade-lab conditions (182 / 112 / 282 trades for golden / 10-20 / bare cross on the 71 stocks; also a unit test).
+
+**Shortlist backtest** (all-A, quality-passing; `--set strategies.ma_cross.enabled=true ...`; net of 1%; vs bkt = mean
+excess over the same-day quality basket; 2025 / 2026):
+
+| Swing (20-day hold) | Trades | Mean | PF | vs bkt | stop8_ma20 PF / vs bkt | Recall (2025) | Signals per catch |
+|---|---|---|---|---|---|---|---|
+| **current** | 117 / 133 | +0.3 / +2.1 | 1.1 / 2.1 | −0.1 / +1.3 | 1.4 / 1.7, +0.1 / +0.8 | 46% (39%) | 10.5 |
+| + ma_cross (primary) | 125 / 142 | +0.0 / +2.0 | 1.0 / 2.0 | −0.5 / +1.2 | 1.3 / 1.5, −0.3 / +0.5 | 48% (41%) | 10.8 |
+| + ma_cross, MACD filter off for it | 170 / 160 | +0.4 / +2.1 | 1.1 / 2.2 | −1.0 / +0.8 | 1.4 / 1.3, −0.6 / −0.1 | **64% (59%)** | 10.2 |
+| + ma_cross as confirm | 117 / 133 | +0.3 / +2.2 | 1.1 / 2.1 | −0.1 / +1.3 | 1.4 / 1.7, +0.1 / +0.9 | 46% (39%) | 10.5 |
+| ma_cross alone | 27 / 36 | +1.3 / +4.2 | 1.4 / 2.9 | +0.5 / +2.7 | 0.6 / 1.7, −2.4 / +1.0 | 10% (7%) | 13.0 |
+| **ma_cross alone, MACD filter off** | 93 / 87 | +3.3 / +3.3 | **2.3 / 2.7** | **+0.1 / +1.1** | 2.1 / 1.3, −0.6 / −0.5 | 42% (39%) | **8.3** |
+
+| Position (60-day hold) | Trades | Mean | PF | vs bkt | stop10_ma50 PF / vs bkt | Recall (2025) | Signals per catch |
+|---|---|---|---|---|---|---|---|
+| **current** | 51 / 52 | +4.6 / +2.2 | 2.3 / 1.7 | +2.3 / +1.7 | 2.5 / 1.1, +1.8 / −0.0 | 18% (14%) | 17.7 |
+| + ma_cross (primary) | 90 / 72 | +3.8 / +4.4 | 2.0 / 2.8 | −0.5 / +1.3 | 1.9 / 1.6, −0.0 / −0.1 | **53% (48%)** | **9.2** |
+| + ma_cross as confirm | 51 / 52 | +4.7 / +2.3 | 2.4 / 1.7 | +2.4 / +1.7 | 2.6 / 1.1, +1.9 / +0.0 | 18% (14%) | 17.7 |
+| ma_cross alone | 69 / 57 | +4.4 / +4.3 | 2.2 / 3.2 | −1.5 / +1.4 | 2.0 / 1.4, −0.4 / +0.0 | 44% (41%) | 8.6 |
+
+What it says:
+- **As a primary strategy added to the current shortlists it makes them worse**: swing loses excess in both years;
+  position gains a lot of recall (18% → 53%) but its 2025 excess goes from +2.3 to −0.5. Golden crosses are mostly
+  market-driven, so in 2025's choppier market they added picks that only matched the basket.
+- **Swing's MACD filter (cross within 10 days) and golden crosses don't mix**: the MACD has usually crossed earlier, so
+  the filter keeps 27 of 93 trades and drops recall to 10%. Any swing use should exempt `ma_cross`.
+- **As confirm** (only the +10 confluence bonus) it changes almost nothing: equal or a hair better on every number.
+  The few picks it confirms did well (swing 8 picks: +4.2 / +4.4 vs bkt; position 20: +3.6 / +5.0), too few to count.
+- **On its own, MACD filter off, 20-day hold** it meets the docs/05 §4 bar in both years (PF ≥ 1.5, mean vs basket > 0,
+  recall ≥ 40%, fewer signals per catch than the current swing list), which the current swing shortlist doesn't
+  (2025 PF 1.1). But its 2025 edge over the basket is only +0.1, and trailing exits ruin it (fixed holds only).
+- **Decision (2026-10-06): a separate daily list, `config/profiles/trend.yaml`** (golden cross alone, MACD filter off,
+  swing's quality rules and ranking, 20-day hold), third section of the 3pm summary. Off in swing and position.
+  `backtest --profile trend` reproduces the row above. Re-check as 2026 data grows: medians vs the basket are negative
+  (−2.3 / −0.8; beats it on 34% / 44% of trades), so the edge rests on a minority of big winners.
 
 ### W9: base breakout don't-chase + score fix, 2026-10-05 (tested, not adopted)
 New `base_breakout` options, off by default (signals and scores unchanged; the W5 regression test still passes):

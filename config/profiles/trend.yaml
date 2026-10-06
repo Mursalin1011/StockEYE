@@ -1,0 +1,61 @@
+name: trend
+description: 20/50 golden cross with volume support. Hold about 20 trading days; no trailing stop.
+universe: all_equities          # every active DSE equity; `ds30` for the blue chips only
+
+# Separate list for the MA cross strategy (docs/05 W10, docs/06 §13). Same stocks and ranking as swing, so the
+# two lists are comparable; only the strategy and the technical filter differ.
+# 2-year shortlist backtest (all-A, 71 quality stocks, Jan 2025 -> Oct 2026, net of 1%, 20-day hold):
+#   PF 2.3 / 2.7, mean +3.3% / +3.3%, vs the quality basket +0.1 / +1.1 (2025 / 2026), recall 42%, 8.3 signals per
+#   catch. The 2025 edge over the basket is thin; most of the return is the market. Trailing exits (-8% stop + MA20)
+#   turn it negative: hold for the period instead.
+
+filters:
+  quality:
+    enabled: true
+    rules:                     # = swing
+      category:              { in: [A] }
+      sector:                { not_in: [Insurance] }
+      avg_value_mn_60:       { min: 3 }
+      traded_days_pct_60:    { min: 90 }
+      dividend_streak:       { min: 3 }
+      eps_positive_years_5:  { min: 4 }
+      pe:                    { max: 35 }
+      strategic_pct:         { min: 25 }
+
+  # Off: by the time MA20 crosses MA50 the MACD crossed weeks earlier, so swing's "MACD cross within 10 days"
+  # rule keeps only 27 of 93 trades and drops recall from 42% to 10%.
+  technical:
+    enabled: false
+    params: { rsi_window: 14, macd_fast: 12, macd_slow: 26, macd_signal: 9 }
+    rules: {}
+
+strategies:
+  ma_cross:
+    weight: 1.0
+    params:
+      fast: 20
+      slow: 50
+      require_close_above_slow: true
+      vol_short_days: 10
+      vol_baseline_days: 50
+      min_volume_ratio: 1.0      # 10-day average volume above the 50-day average (a one-day spike did worse)
+      max_days_since: 2
+
+backtest:
+  horizons: [5, 10, 20, 60]    # trading days held
+  primary_horizon: 20
+  cost_pct: 1.0                # round trip, %
+  in_sample_until: 2025-12-31
+  exits:
+    stop8_ma20: {stop_pct: 8, trail_ma: 20, max_days: 60}    # for comparison: worse than holding 20 days
+  winners: {min_gain_pct: 50, within_days: 120, before_days: 20, after_days: 60, max_entry_premium_pct: 20}
+
+ranking:                       # = swing
+  top_n: 10
+  min_score: 40
+  confluence_bonus: 10
+  record_date_window_days: 15
+  record_date_penalty: 20
+  boosts:
+    - { metric: institute_change_pp, when: { min: 1.0 }, points: 5, label: "institutions adding",
+        detail: "institutional holding {value:+.1f} pts" }

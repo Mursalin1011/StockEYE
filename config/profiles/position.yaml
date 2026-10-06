@@ -66,6 +66,15 @@ strategies:
       window_days: 40
       min_rebreak_volume_x: 2.0
       max_days_since: 5
+  ma_cross:
+    enabled: false
+    weight: 1.0
+    # 20/50 golden cross with volume support (docs/06 §13); see the swing profile
+    params:
+      fast: 20
+      slow: 50
+      min_volume_ratio: 1.0
+      max_days_since: 5
   big_hands:
     weight: 0.7
     # 2-year check: on its own, worse than a random day at 60 days (larger trades can be selling too).
