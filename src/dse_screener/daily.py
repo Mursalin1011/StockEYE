@@ -1,4 +1,4 @@
-"""The 3pm job: wait for today's data -> refresh news -> screen every profile -> deliver."""
+"""The 3pm job: wait for today's data -> refresh news -> screen every profile -> deliver -> rebuild big moves."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Callable
 
 import pandas as pd
 
-from . import engine, fundamentals, ingest, market, quality, report, rules
+from . import engine, fundamentals, ingest, market, moves, quality, report, rules
 from .config import Settings, list_profiles, load_profile
 from .universes import universe_codes
 from .db import Database
@@ -92,6 +92,7 @@ def run_daily(
         settings.report, report.pick_quotes(db, pick_codes, day),
     )
     deliver(text)
+    _rebuild_moves(settings, db)
     return DailyOutcome("sent", day, text, {p.name: r.picks["code"].tolist() for p, r in results})
 
 
@@ -149,6 +150,15 @@ def _research_housekeeping(settings: Settings, db: Database) -> None:
             log.info("Research: %d new document(s) imported, %d AI call(s) scored", len(added), scored)
     except Exception:  # noqa: BLE001
         log.exception("Research housekeeping failed (daily summary continues)")
+
+
+def _rebuild_moves(settings: Settings, db: Database) -> None:
+    """Refresh the dashboard's Big moves page with today's prices (takes about a minute, after the summary is out).
+    Failures are only logged: the API rebuilds it on the next visit anyway."""
+    try:
+        moves.latest(db, settings)
+    except Exception:  # noqa: BLE001
+        log.exception("Big moves scan failed (the dashboard rebuilds it on the next visit)")
 
 
 def _all_universe_codes(settings: Settings, db: Database) -> list[str]:

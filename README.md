@@ -45,6 +45,7 @@ Then open http://127.0.0.1:3000. Both servers listen on this PC only. Or start t
 | Stocks | The universe with key figures and quality pass/fail per profile |
 | Stock page | Candles + signal markers + ex-dates, volume, **RSI(14)**, **MACD(12,26,9)**; fundamentals, shareholding, dividends, news |
 | History | What was picked on each day |
+| Big moves | Every +50% run-up in **any** stock (quality filter not applied), which strategies caught it early, and every stock your strategies flagged, with filters (quality, liquidity, strategy, date). Rebuilt by the daily job after the summary |
 | Quality | The "good business" filter, metric by metric, with why a stock failed |
 | Backtest | What would have happened if you'd bought the shortlist, vs a quality-stock basket |
 | Settings | The YAML config (read-only for now) |
@@ -117,6 +118,16 @@ the fixed holding periods in `backtest.horizons`, any exit styles in `backtest.e
 
 ```powershell
 .\.venv\Scripts\python.exe -m dse_screener casestudy PTL --from 2025-11-01 [--profile swing] [--shortlist]
+```
+
+**See every big move and what caught it.** `moves` scans every stock (not only the quality ones) for big
+run-ups (`backtest.winners`) and lists which strategies of every profile caught each early, plus every
+strategy signal (also the dashboard's **Big moves** page). The scan takes about a minute, so it is stored:
+the daily job rebuilds it after sending the summary, and the page rebuilds it on the first visit after new
+prices or a profile change.
+
+```powershell
+.\.venv\Scripts\python.exe -m dse_screener moves [--top 25] [--rebuild]
 ```
 
 **Test your own rules (trade lab).** `simulate` runs a trade plan (your entry, exit and hold rules) on any
@@ -208,6 +219,7 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener backtest --profile swing [--set PATH=VALUE] [--csv trades.csv]
 & $py -m dse_screener tune --profile swing --grid PATH=V1,V2
 & $py -m dse_screener casestudy PTL --from 2025-11-01   # every signal on one stock, with outcomes
+& $py -m dse_screener moves           # big moves in every stock and which strategies caught them
 & $py -m dse_screener simulate PTL --plan breakout-swing   # your own entry/exit rules on any stock
 & $py -m dse_screener research add <link> ; research review   # AI review of research PDFs
 & $py -m dse_screener api             # API for the dashboard

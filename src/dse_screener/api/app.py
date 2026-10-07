@@ -19,7 +19,7 @@ import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ValidationError
 
-from .. import backtest, casestudy, engine, features, indicators, quality, report, rules, simulate
+from .. import backtest, casestudy, engine, features, indicators, moves, quality, report, rules, simulate
 from ..config import (CONFIG_DIR, OPERATORS, TradePlan, list_plans, list_profiles, load_plan, load_profile,
                       load_settings, plan_path, plan_to_yaml_data)
 from ..universes import universe_codes as resolve_universe
@@ -369,6 +369,15 @@ def casestudy_view(code: str, profile: str = "swing", start: date | None = None,
         "moves": records(cs.moves),
         "chart": chart_data,
     }
+
+
+@app.get("/api/moves")
+def moves_view(db: Database = Depends(get_db)):
+    """Big moves in every stock with the strategies that caught them early, and every strategy signal.
+
+    Stored by the daily job; rebuilt here (about a minute) only if prices or a profile changed since.
+    """
+    return moves.latest(db, settings)
 
 
 # --- trade lab (docs/06-trade-lab-plan.md) -------------------------------------

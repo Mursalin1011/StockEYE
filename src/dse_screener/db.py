@@ -211,6 +211,14 @@ CREATE TABLE IF NOT EXISTS market_daily (   -- DSE's official day totals: unlike
     fetched_at      TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS moves_scans (    -- the "Big moves" page (moves.py), precomputed: it takes about a minute
+    as_of       TEXT NOT NULL,              -- last price date scanned
+    config      TEXT NOT NULL,              -- hash of the profiles it used, so a config change rebuilds it
+    built_at    TEXT NOT NULL,
+    payload     TEXT NOT NULL,              -- JSON as served by /api/moves
+    PRIMARY KEY (as_of, config)
+);
+
 CREATE TABLE IF NOT EXISTS ingest_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_at      TEXT NOT NULL,
@@ -317,6 +325,20 @@ class Database:
 
     def date_range(self) -> tuple[str | None, str | None]:
         return self.conn.execute("SELECT MIN(date), MAX(date) FROM daily_prices").fetchone()
+
+    # --- big moves scan -----------------------------------------------------
+
+    def save_moves_scan(self, as_of: str, config: str, payload: dict) -> None:
+        """Keep only the latest scan."""
+        with self.conn:
+            self.conn.execute("DELETE FROM moves_scans")
+            self.conn.execute("INSERT INTO moves_scans (as_of, config, built_at, payload) VALUES (?, ?, ?, ?)",
+                              (as_of, config, _now(), json.dumps(payload)))
+
+    def load_moves_scan(self) -> tuple[str, str, dict] | None:
+        """(as_of, config, payload) of the stored scan, or None."""
+        row = self.conn.execute("SELECT as_of, config, payload FROM moves_scans ORDER BY built_at DESC LIMIT 1").fetchone()
+        return (row[0], row[1], json.loads(row[2])) if row else None
 
     # --- fundamentals -------------------------------------------------------
 

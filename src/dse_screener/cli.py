@@ -97,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="also run each profile's backtest to show the stock's actual shortlist rank (slower)")
     p.add_argument("--csv", type=Path, help="write the signals to this CSV file")
 
+    p = sub.add_parser("moves", help="big moves (+50%%) in every stock and which strategies caught them early")
+    p.add_argument("--rebuild", action="store_true", help="rebuild even if the stored scan is current")
+    p.add_argument("--top", type=int, default=25, help="how many of the biggest moves to list")
+
     p = sub.add_parser("simulate", help="trade lab: test your own entry/exit rules on any stock (docs/06)",
                        formatter_class=argparse.RawDescriptionHelpFormatter,
                        epilog="Condition columns (N = any number):\n  " + "\n  ".join(features.known())
@@ -566,6 +570,24 @@ def _plan_from_args(args) -> TradePlan:
     return TradePlan.model_validate(data)
 
 
+def cmd_moves(args, settings, db) -> int:
+    from . import moves
+
+    d = moves.latest(db, settings, force=args.rebuild)
+    w, mv = d["winners"], d["moves"]
+    primary = [m for m in mv if any(c["strategy"] != "big_hands" for c in m["caught_by"])]
+    print(f"\n=== Big moves: close +{w['min_gain_pct']:g}% within {w['within_days']} days, {d['from']} .. {d['as_of']}, "
+          f"all stocks (built {d['built_at']})")
+    print(f"{len(mv)} moves in {len({m['code'] for m in mv})} stocks; {len(primary)} caught early by a primary strategy "
+          f"({w['before_days']} days before to {w['after_days']} after the start, entry <= +{w['max_entry_premium_pct']:g}%)\n")
+    for m in mv[:args.top]:
+        caught = ", ".join(f"{c['key']} ({c['days_from_start']:+d}d)" for c in m["caught_by"] if c["strategy"] != "big_hands")
+        print(f"  {m['code']:<12} {m['date']} -> {m['peak_date']}  {m['peak_gain_pct']:+6.0f}%  {caught or 'missed'}")
+    print(f"\n{len(d['signals'])} signal starts in {len({s['code'] for s in d['signals']})} stocks. "
+          "Full lists on the dashboard's Big moves page.")
+    return 0
+
+
 def cmd_simulate(args, settings, db) -> int:
     if not (args.plan or args.strategy or args.when or args.dates):
         saved = ", ".join(list_plans()) or "none yet"
@@ -937,6 +959,7 @@ COMMANDS = {
     "backtest": cmd_backtest,
     "tune": cmd_tune,
     "casestudy": cmd_casestudy,
+    "moves": cmd_moves,
     "simulate": cmd_simulate,
     "research": cmd_research,
     "telegram-setup": cmd_telegram_setup,

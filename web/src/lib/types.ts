@@ -465,3 +465,45 @@ export type SweepView = {
   split: boolean;
   rows: SweepRow[];
 };
+
+export type MoveCatch = { key: string; profile: string; strategy: string; date: string; days_from_start: number; gain_left_pct: number };
+
+export type BigMove = {
+  code: string;
+  date: string;
+  peak_date: string;
+  start: number;
+  peak: number;
+  peak_gain_pct: number;
+  days: number;
+  avg_value_mn_60: number | null;
+  caught_by: MoveCatch[];
+};
+
+export type MoveSignal = {
+  date: string;
+  code: string;
+  profile: string;
+  strategy: string;
+  role: string;
+  score: number;
+  close: number;
+  ret: number | null;
+  best: number | null;
+  to_last: number | null;
+  quality: boolean;
+  avg_value_mn_60: number | null;
+};
+
+export type MovesView = {
+  as_of: string;
+  from: string;
+  built_at: string;
+  winners: { min_gain_pct: number; within_days: number; before_days: number; after_days: number; max_entry_premium_pct: number };
+  horizon: number;
+  profiles: string[];
+  strategies: Record<string, string>;
+  stocks: Record<string, { name: string; sector: string; category: string; quality: string[] }>;
+  moves: BigMove[];
+  signals: MoveSignal[];
+};

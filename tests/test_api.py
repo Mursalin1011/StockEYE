@@ -96,3 +96,11 @@ def test_trade_lab_portfolio_and_grid_over_a_universe():
     g = client.post("/api/sweep", json={"plan": plan, "grid": {"exit.stop_pct": [5, 10], "portfolio.max_positions": [2, 4]}}).json()
     assert len(g["rows"]) == 4 and g["split"] and {"in_mean", "out_mean", "return_pct"} <= set(g["rows"][0])
     assert client.post("/api/sweep", json={"plan": plan, "grid": {"exit.stop_pct": list(range(40))}}).status_code == 400
+
+
+def test_moves_lists_big_moves_with_their_catches():
+    d = client.get("/api/moves").json()
+    assert d["moves"] and d["signals"] and {"swing", "position"} <= set(d["profiles"])
+    m = d["moves"][0]
+    assert m["peak_gain_pct"] >= d["winners"]["min_gain_pct"] and m["code"] in d["stocks"]
+    assert all(c["key"] == f"{c['profile']}:{c['strategy']}" for mv in d["moves"] for c in mv["caught_by"])
