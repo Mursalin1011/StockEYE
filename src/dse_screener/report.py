@@ -73,6 +73,31 @@ def turnover_text(market: dict) -> str:
     return f"৳{market['turnover_mn']:,.1f} mn (৳{market['turnover_cr']:,.0f} cr, {note})"
 
 
+def pick_quotes(db: Database, codes: list[str], as_of: date) -> dict[str, dict]:
+    """The day's YCP / open / close per pick as DSE published them (unadjusted), with the change
+    close vs YCP. Codes without a row that day are left out."""
+    if not codes:
+        return {}
+    day = db.load_prices(codes, start=as_of, end=as_of)
+    out = {}
+    for r in day.itertuples():
+        ycp, close = _num(r.ycp), _num(r.close)
+        out[r.code] = {"ycp": ycp, "open": _num(r.open), "close": close,
+                       "pct": (close - ycp) / ycp * 100 if ycp and close is not None else None}
+    return out
+
+
+def _num(v) -> float | None:
+    return None if v is None or pd.isna(v) or v == 0 else float(v)
+
+
+def quote_text(q: dict) -> str:
+    """'YCP 45.2 · Open 45.5 · Close 46.1 (+1.99%)'; a missing price shows as –."""
+    f = lambda v: "–" if v is None else f"{v:,.1f}"
+    text = f"YCP {f(q['ycp'])} · Open {f(q['open'])} · Close {f(q['close'])}"
+    return text + (f" ({q['pct']:+.2f}%)" if q["pct"] is not None else "")
+
+
 def recent_news(db: Database, codes: list[str], as_of: date, cfg: ReportConfig) -> dict[str, list[str]]:
     if not codes:
         return {}
@@ -91,8 +116,10 @@ def _e(s) -> str:
     return html.escape(str(s), quote=False)
 
 
-def _pick_lines(pick, news: list[str], cfg: ReportConfig, rank: int) -> list[str]:
+def _pick_lines(pick, news: list[str], cfg: ReportConfig, rank: int, quote: dict | None = None) -> list[str]:
     lines = [f"<b>{rank}. {_e(pick.code)}</b> · score {pick.final_score:.0f}"]
+    if quote:
+        lines.append("💹 " + _e(quote_text(quote)))
     extras, tech = [], None
     for reason in pick.reasons:
         if reason.startswith("Tech: "):
@@ -120,7 +147,9 @@ def build_daily_report(
     market: dict,
     news: dict[str, list[str]],
     cfg: ReportConfig,
+    quotes: dict[str, dict] | None = None,
 ) -> str:
+    quotes = quotes or {}
     indices = index_text(market)
     blocks = [
         f"<b>📊 DSE Screener · {as_of:%a %d %b %Y}</b>\n"
@@ -137,7 +166,7 @@ def build_daily_report(
         if res.picks.empty:
             blocks.append("No stock meets the bar today.")
         for i, pick in enumerate(res.picks.itertuples(), 1):
-            blocks.append("\n".join(_pick_lines(pick, news.get(pick.code, []), cfg, i)))
+            blocks.append("\n".join(_pick_lines(pick, news.get(pick.code, []), cfg, i, quotes.get(pick.code))))
     blocks.append(f"<i>{_e(DISCLAIMER)}</i>")
     return "\n\n".join(blocks)
 

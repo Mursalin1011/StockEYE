@@ -7,7 +7,7 @@ from dse_screener.config import load_settings
 from dse_screener.daily import run_daily
 from dse_screener.db import Database
 from dse_screener.notify.telegram import split_message
-from dse_screener.report import index_text, market_summary, to_plain
+from dse_screener.report import index_text, market_summary, pick_quotes, quote_text, to_plain
 
 THURSDAY = date(2026, 10, 1)
 
@@ -146,3 +146,13 @@ def test_index_line_with_change_from_previous_day(env):
     ]))
     m = market_summary(db, THURSDAY)
     assert index_text(m) == "DSEX 5,050.0 (+50.0, +1.00%) · DS30 1,990.0 (-10.0, -0.50%)"
+
+
+def test_pick_quotes_show_ycp_open_close_and_change(env):
+    _, db, _ = env
+    _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), official=lambda d: False)
+    q = pick_quotes(db, ["X1", "X2", "NOPE"], THURSDAY)
+    assert set(q) == {"X1", "X2"}                                   # no row, no line
+    assert quote_text(q["X1"]) == "YCP 10.0 · Open 10.0 · Close 10.5 (+5.00%)"
+    assert quote_text(q["X2"]) == "YCP 10.0 · Open 10.0 · Close 9.5 (-5.00%)"
+    assert quote_text({"ycp": 10.0, "open": None, "close": None, "pct": None}) == "YCP 10.0 · Open – · Close –"

@@ -396,7 +396,7 @@ def cmd_report(args, settings, db) -> int:
     pick_codes = sorted({c for _, r in results for c in r.picks["code"]})
     text = report.build_daily_report(
         day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
-        settings.report,
+        settings.report, report.pick_quotes(db, pick_codes, day),
     )
     _deliverer(settings, dry_run=not args.send)(text)
     return 0

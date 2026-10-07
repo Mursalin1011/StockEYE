@@ -89,7 +89,7 @@ def run_daily(
     pick_codes = sorted({c for _, r in results for c in r.picks["code"]})
     text = report.build_daily_report(
         day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
-        settings.report,
+        settings.report, report.pick_quotes(db, pick_codes, day),
     )
     deliver(text)
     return DailyOutcome("sent", day, text, {p.name: r.picks["code"].tolist() for p, r in results})
