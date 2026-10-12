@@ -42,6 +42,7 @@ Then open http://127.0.0.1:3000. Both servers listen on this PC only. Or start t
 | Page | What it shows |
 |---|---|
 | Picks | Each day's shortlist per profile: score, strategies, reasons, recent DSE news; **setups to watch** (second breakouts still forming: the close and volume needed, days left) and **all signals** (incl. below the cut, filter by strategy) |
+| Holdings | Your positions with the same checks as the 3pm message (P/L, stop, MA20, warnings, record dates, news), a form to add buys, sells and stops, re-entry alerts, closed positions, and every entry with undo/delete. Telegram entries show up here too |
 | Stocks | The universe with key figures and quality pass/fail per profile |
 | Stock page | Candles + signal markers + ex-dates, volume, **RSI(14)**, **MACD(12,26,9)**; fundamentals, shareholding, dividends, news |
 | History | What was picked on each day |
@@ -204,7 +205,8 @@ public distribution": they stay in `data/` (git-ignored) and are only sent to th
 
 ## Your positions (holdings tracker)
 
-Tell the bot what you bought and sold; the 3pm summary then opens with **Your positions**:
+Tell the bot what you bought and sold (or use the dashboard's **Holdings** page: same ledger, same checks);
+the 3pm summary then opens with **Your positions**:
 
 | Send | Means |
 |---|---|

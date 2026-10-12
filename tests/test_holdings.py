@@ -213,3 +213,51 @@ def test_bot_handles_own_chat_only_and_never_twice(env):
     tg.sent.clear()
     assert bot.poll_once(db, settings, tg) == 0 and tg.offsets[-1] == 10          # offset confirms what was read
     assert db.add_trade("PTL", "buy", TODAY, 50.0, 100, source="telegram", source_ref="tg:7") is None
+
+
+# --- dashboard API ----------------------------------------------------------------------------------
+
+def test_api_add_list_delete_and_undo(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from dse_screener.api import app as api
+
+    path = tmp_path / "api.sqlite"
+    seed = Database(path)
+    seed.upsert_prices(_prices("PTL", [50.0] * 60), "test")
+    seed.close()
+
+    def temp_db():
+        db = Database(path, check_same_thread=False)
+        try:
+            yield db
+        finally:
+            db.close()
+
+    api.app.dependency_overrides[api.get_db] = temp_db
+    try:
+        client = TestClient(api.app)
+        res = client.post("/api/holdings/trades", json={"action": "buy", "code": "ptl", "price": 50, "qty": 100,
+                                                       "date": TODAY.isoformat(), "stop": 46})
+        assert res.status_code == 200 and "Bought PTL 100 @ 50.00" in res.json()["reply"]
+        assert "/undo" not in res.json()["reply"]
+        bad = client.post("/api/holdings/trades", json={"action": "sell", "code": "PTL", "price": 55, "qty": 500})
+        assert bad.status_code == 400 and "can't sell 500" in bad.json()["detail"]
+        assert client.post("/api/holdings/trades", json={"action": "buy", "code": "PTL"}).status_code == 400
+
+        v = client.get("/api/holdings").json()
+        (p,) = v["positions"]
+        assert (p["code"], p["shares"], p["cost"], p["stop"], p["default_stop"]) == ("PTL", 100, 50, 46, False)
+        assert v["totals"]["pnl"] == 0 and v["last_close"]["PTL"] == 50 and "PTL" in v["codes"]
+        assert [r["action"] for r in v["ledger"]] == ["stop", "buy"]            # newest first
+        assert all(r["source"] == "dashboard" for r in v["ledger"])
+
+        stop_id = v["ledger"][0]["id"]
+        assert client.delete(f"/api/holdings/trades/{stop_id}").json() == {"ok": True}
+        assert client.delete(f"/api/holdings/trades/{stop_id}").status_code == 404
+        assert client.get("/api/holdings").json()["positions"][0]["default_stop"] is True
+        assert "Removed: PTL bought 100 @ 50.00" in client.post("/api/holdings/undo").json()["reply"]
+        assert client.get("/api/holdings").json()["positions"] == []
+    finally:
+        api.app.dependency_overrides.clear()

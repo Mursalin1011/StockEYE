@@ -382,6 +382,7 @@ class Review:
     as_of: date
     checks: list[Check]
     reentries: list[Reentry]
+    closed: list[Position] = field(default_factory=list)   # every closed position, oldest first
 
 
 def tracked_codes(db: Database, settings: Settings, as_of: date) -> list[str]:
@@ -395,7 +396,7 @@ def review(db: Database, settings: Settings, as_of: date,
            results: list[tuple[Profile, ScreenResult]] | None = None) -> Review:
     trades = db.load_trades()
     if trades.empty:
-        return Review(as_of, [], [])
+        return Review(as_of, [], [], [])
     codes = sorted(set(trades["code"]))
     actions = db.load_corporate_actions(codes)
     opened, closed = build_positions(trades, actions, as_of, settings.adjustments.adjust_cash_dividends)
@@ -424,7 +425,7 @@ def review(db: Database, settings: Settings, as_of: date,
             reentries.append(Reentry(pos, what))
     # one alert per stock: the latest sell
     reentries = list({r.pos.code: r for r in sorted(reentries, key=lambda r: r.pos.closed)}.values())
-    return Review(as_of, checks, reentries)
+    return Review(as_of, checks, reentries, closed)
 
 
 def _signals_today(results: list[tuple[Profile, ScreenResult]]) -> dict[str, list[str]]:
@@ -545,6 +546,68 @@ def _away(level: float, close: float) -> str:
     """'12.3% below' / '2.1% above': where a level is relative to the close."""
     pct = (level / close - 1) * 100
     return f"{abs(pct):.1f}% {'above' if pct > 0 else 'below'}"
+
+
+def stored_results(db: Database, as_of: date) -> list[tuple[Profile, ScreenResult]]:
+    """The saved screens of a day (latest run per profile), so the dashboard shows the same signal notes
+    and re-entry alerts as the 3pm message without re-running the screen."""
+    from .strategies import REGISTRY
+
+    runs = db.load_runs()
+    runs = runs[runs["as_of"] == as_of.isoformat()]
+    if runs.empty:
+        return []
+    ids = runs["run_id"].astype(int).tolist()
+    sigs, watch = db.load_run_signals(ids), db.load_run_watch(ids)
+    title = lambda name: REGISTRY[name].title if name in REGISTRY else name  # noqa: E731
+    out = []
+    for r in runs.itertuples():
+        sg = sigs[sigs["run_id"] == r.run_id].assign(title=lambda d: d["strategy"].map(title))
+        wt = watch[watch["run_id"] == r.run_id].assign(title=lambda d: d["strategy"].map(title))
+        out.append((Profile(name=r.profile), ScreenResult(r.profile, as_of, int(r.universe_size or 0), pd.DataFrame(),
+                                                         sg, pd.DataFrame(), watch=wt)))
+    return out
+
+
+def review_json(rv: Review, settings: Settings) -> dict:
+    """The review as plain data for the dashboard."""
+    def pos(p: Position) -> dict:
+        return {"code": p.code, "opened": p.opened.isoformat(), "shares": p.shares if p.sized else None,
+                "buys": p.buys, "cost": p.cost, "paid": p.paid if p.sized else None, "sized": p.sized,
+                "closed": p.closed.isoformat() if p.closed else None, "exit_price": p.exit_price,
+                "realized_pct": p.realized_pct}
+
+    checks = []
+    for c in rv.checks:
+        checks.append({**pos(c.pos), "close": c.close, "day_pct": c.day_pct, "pnl_pct": c.pnl_pct,
+                       "pnl_amount": c.pnl_amount, "days_held": c.days_held, "peak": c.peak, "stop": c.stop,
+                       "default_stop": c.default_stop, "ma": c.ma, "ma_days": c.ma_days, "warnings": c.warnings,
+                       "notes": c.notes, "news": c.news, "traded_today": c.traded_today})
+    sized = [c for c in rv.checks if c.pos.sized and c.pnl_amount is not None]
+    totals = None
+    if sized and len(sized) == len(rv.checks):
+        cost = sum(c.pos.cost * c.pos.shares for c in sized)
+        pnl = sum(c.pnl_amount for c in sized)
+        totals = {"cost": cost, "value": cost + pnl, "pnl": pnl, "pnl_pct": pnl / cost * 100 if cost else None}
+    return {"as_of": rv.as_of.isoformat(), "positions": checks, "totals": totals,
+            "reentries": [{**pos(r.pos), "what": r.what} for r in rv.reentries],
+            "closed": [pos(p) for p in reversed(rv.closed)],
+            "settings": settings.holdings.model_dump()}
+
+
+def command_text(action: str, code: str, price: float | None, qty: float | None = None,
+                 day: date | None = None, stop: float | None = None) -> str:
+    """Form fields -> the same command text as in Telegram, so both go through one parser and its checks."""
+    n = lambda x: str(int(x)) if float(x).is_integer() else repr(float(x))  # noqa: E731 - never 1e+06
+    words = [action, code.strip()]
+    words.append("off" if action == "stop" and not price else n(price) if price is not None else "")
+    if qty is not None:
+        words.append(n(qty))
+    if day is not None:
+        words.append(day.isoformat())
+    if stop:
+        words += ["stop", n(stop)]
+    return " ".join(w for w in words if w)
 
 
 def holdings_message(db: Database, settings: Settings) -> str:

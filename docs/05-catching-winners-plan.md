@@ -129,7 +129,8 @@ and the 3pm job reads any messages still waiting before it builds the summary.
 - **Re-entry**: for 60 days after a sell, a 🔁 line when a strategy signals the stock again or a second-breakout
   setup forms in it. This answers decision 3 for stocks you've held; other stocks still go through the shortlist.
 - Held stocks get news and company-page refreshes even when they fail the quality filter.
-- Thresholds: `holdings:` in `config/settings.yaml`. Not yet: a dashboard page, and checking on the trailing-stop
+- Thresholds: `holdings:` in `config/settings.yaml`. Dashboard: the **Holdings** page (2026-10-12) adds, sells, sets stops, undoes and deletes entries through the same
+  parser and checks as the bot. Not yet: checking on the trailing-stop
   exits as a backtest exit style (stop8_ma20 is what the defaults mirror).
 
 Done when it has been used for real positions for two weeks and the warnings were useful, not noise.

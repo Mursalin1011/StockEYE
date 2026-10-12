@@ -507,3 +507,58 @@ export type MovesView = {
   moves: BigMove[];
   signals: MoveSignal[];
 };
+
+export type HoldingPosition = {
+  code: string;
+  opened: string;
+  shares: number | null; // null = buys entered without a share count
+  buys: number;
+  cost: number; // average cost per share, adjusted for dividends/bonus since the buy
+  paid: number | null;
+  sized: boolean;
+  closed: string | null;
+  exit_price: number | null;
+  realized_pct: number | null;
+};
+
+export type HoldingCheck = HoldingPosition & {
+  close: number | null;
+  day_pct: number | null;
+  pnl_pct: number | null;
+  pnl_amount: number | null;
+  days_held: number;
+  peak: number | null;
+  stop: number;
+  default_stop: boolean;
+  ma: number | null;
+  ma_days: number;
+  warnings: string[];
+  notes: string[];
+  news: string[];
+  traded_today: boolean;
+};
+
+export type LedgerEntry = {
+  id: number;
+  code: string;
+  action: "buy" | "sell" | "stop";
+  date: string;
+  price: number;
+  qty: number | null;
+  note: string | null;
+  source: string;
+  created_at: string;
+};
+
+export type HoldingsView = {
+  as_of: string;
+  today: string;
+  positions: HoldingCheck[];
+  totals: { cost: number; value: number; pnl: number; pnl_pct: number | null } | null;
+  reentries: (HoldingPosition & { what: string[] })[];
+  closed: HoldingPosition[];
+  ledger: LedgerEntry[];
+  codes: string[];
+  last_close: Record<string, number>;
+  settings: { default_stop_pct: number; trail_ma: number; reentry_days: number; near_stop_pct: number };
+};

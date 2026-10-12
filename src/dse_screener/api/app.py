@@ -17,9 +17,11 @@ from datetime import date
 import pandas as pd
 import yaml
 from fastapi import Depends, FastAPI, HTTPException, Query
-from pydantic import BaseModel, ValidationError
+from typing import Literal
 
-from .. import backtest, casestudy, engine, features, indicators, moves, quality, report, rules, simulate
+from pydantic import BaseModel, Field, ValidationError
+
+from .. import backtest, casestudy, engine, features, holdings, indicators, moves, quality, report, rules, simulate
 from ..config import (CONFIG_DIR, OPERATORS, TradePlan, list_plans, list_profiles, load_plan, load_profile,
                       load_settings, plan_path, plan_to_yaml_data)
 from ..universes import universe_codes as resolve_universe
@@ -704,3 +706,65 @@ def research_job(job_id: str):
     if not job:
         raise HTTPException(404, "Unknown job")
     return {"id": job_id, **job}
+
+
+# --- holdings (your positions; same ledger and checks as the Telegram bot) ------------------
+
+class TradeBody(BaseModel):
+    action: Literal["buy", "sell", "stop"]
+    code: str
+    price: float | None = None          # stop: None = back to the default
+    qty: float | None = None
+    day: date | None = Field(None, alias="date")   # default today ("date" in JSON; the name would shadow the type)
+    stop: float | None = None           # buy only
+
+
+def _dashboard_reply(reply_html: str) -> str:
+    """The bot's reply as plain text, without the Telegram-only /undo hints (the page has an Undo button)."""
+    lines = report.to_plain(reply_html).replace(" Typo? /undo", " Typo?").splitlines()
+    return "\n".join(line for line in lines if not line.startswith("/undo"))
+
+
+@app.get("/api/holdings")
+def holdings_view(db: Database = Depends(get_db)):
+    last = db.date_range()[1]
+    if not last:
+        raise HTTPException(404, "No prices stored yet")
+    as_of = date.fromisoformat(last)
+    rv = holdings.review(db, settings, as_of, holdings.stored_results(db, as_of))
+    closes = db.load_prices(start=as_of, end=as_of)
+    trades = db.load_trades().drop(columns=["source_ref"])
+    return {
+        **holdings.review_json(rv, settings),
+        "ledger": records(trades.iloc[::-1]),
+        "codes": sorted(holdings.known_codes(db)),
+        "last_close": {r.code: r.close for r in closes.itertuples() if pd.notna(r.close) and r.close},
+        "today": settings.today().isoformat(),
+    }
+
+
+@app.post("/api/holdings/trades")
+def holdings_add(body: TradeBody, db: Database = Depends(get_db)):
+    if body.action != "stop" and body.price is None:
+        raise HTTPException(400, "Enter a price")
+    text = holdings.command_text(body.action, body.code, body.price, body.qty, body.day,
+                                 body.stop if body.action == "buy" else None)
+    try:
+        reply = holdings.apply(db, settings, holdings.parse(text, settings.today()), source="dashboard")
+    except holdings.CommandError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"reply": _dashboard_reply(reply)}
+
+
+@app.post("/api/holdings/undo")
+def holdings_undo(db: Database = Depends(get_db)):
+    return {"reply": _dashboard_reply(holdings.apply(db, settings, holdings.Command("undo")))}
+
+
+@app.delete("/api/holdings/trades/{trade_id}")
+def holdings_delete(trade_id: int, db: Database = Depends(get_db)):
+    trades = db.load_trades()
+    if trade_id not in set(trades["id"]):
+        raise HTTPException(404, f"No entry #{trade_id}")
+    db.delete_trade(trade_id)
+    return {"ok": True}
