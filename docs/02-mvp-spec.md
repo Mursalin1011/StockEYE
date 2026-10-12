@@ -229,6 +229,7 @@ default), RSI/MACD filters, and a wider universe than DS30 (where volume anomali
 | 2026-10-01 | **Technical filter**: swing requires a bullish MACD cross within 10 trading days (only rule that helped both periods); position has no technical filter (differences were noise). Every pick shows an RSI/MACD line. |
 | 2026-10-01 | Dashboard moved to **Next.js + FastAPI** to grow into a platform; RSI(14) and MACD(12,26,9) added (`indicators.py`) and charted; not yet used by strategies. |
 | 2026-10-06 | **Third daily profile `trend`**: the 20/50 golden cross with volume support (`ma_cross`), same stocks and ranking as swing, no MACD filter, ~20-day hold. The only swing-horizon list to meet the docs/05 bar in both years in backtest (thin 2025 edge). Shown as its own section in the 3pm summary (docs/05 W10). |
+| 2026-10-08 | **Holdings tracker** (docs/05 W8): you mark trades in Telegram (`/bought PTL 53.7 500`, `/sold`, `/stop`, `/holdings`, `/undo`); a `bot` command answers, and the 3pm summary opens with "Your positions" (P/L, stop, MA20, warnings, record dates, news) plus re-entry alerts for stocks sold in the last 60 days. Telegram over the dashboard, as you chose. |
 
 ### Technical filter results (2026-10-01)
 

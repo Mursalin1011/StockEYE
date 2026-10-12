@@ -16,8 +16,8 @@ class TelegramError(RuntimeError):
     pass
 
 
-def _call(session, token: str, method: str, **payload) -> dict:
-    resp = session.post(API.format(token=token, method=method), json=payload, timeout=30)
+def _call(session, token: str, method: str, _timeout: float = 30, **payload) -> dict:
+    resp = session.post(API.format(token=token, method=method), json=payload, timeout=_timeout)
     data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     if not resp.ok or not data.get("ok"):
         # Never log the token: it is part of the URL
@@ -65,6 +65,19 @@ class TelegramNotifier:
                   parse_mode="HTML", disable_web_page_preview=True)
         log.info("Telegram: sent %d message(s)", len(parts))
         return len(parts)
+
+    def updates(self, offset: int | None = None, wait_s: int = 0) -> list[dict]:
+        """New messages to the bot (long poll up to wait_s). Fetching with an offset confirms the ones
+        before it; Telegram keeps unconfirmed updates for 24 hours only."""
+        payload = {"timeout": wait_s, "allowed_updates": ["message"]}
+        if offset is not None:
+            payload["offset"] = offset
+        return _call(self.session, self.token, "getUpdates", _timeout=wait_s + 30, **payload)
+
+    def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        """The menu Telegram shows when you type '/'."""
+        _call(self.session, self.token, "setMyCommands",
+              commands=[{"command": c, "description": d} for c, d in commands])
 
 
 def find_chat_ids(bot_token: str) -> list[dict]:

@@ -89,7 +89,7 @@ What this says:
 | **W7** | **Pocket pivot** as a confirming strategy; **Trend Template v2 + RS rank** (doc 04) for trend-continuation entries | Pocket pivots were earliest but noisy; the trend template caught the Apr–Sep phase | Confirm-role tests; trend profile backtest |
 | **W9** ✅ (tested, not adopted) | **Base breakout: don't chase + score fix** (docs/06 §11): optional `max_extension_pct` (no signal once the close is more than X% above the base high) and re-weighted score points, incl. a new "near the base" term | Trade lab: the score ranked breakouts backwards (top quartile +0.3% vs +3.2% bottom); entries far above the base did worst | Shortlist beats the current version in both periods |
 | **W10** ✅ (own `trend` list) | **MA cross** (`ma_cross`): 20/50 golden cross, close above MA50, 10-day volume above its 50-day average (docs/06 §13) | Trade lab: the only MA rule with an edge over the basket in both years, per signal | Shortlist beats the current version in both periods |
-| **W8** | **Holdings tracker**: mark "bought PTL @ 53.7" (dashboard or Telegram), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
+| **W8** 🔄 (built, in use from 2026-10-08) | **Holdings tracker**: mark "bought PTL @ 53.7" (Telegram: `/bought`, `/sold`, `/stop`, `/holdings`, `/undo`), then a daily line with P/L, stop, trailing MA, warnings, and re-entry alerts | Catching isn't enough; you need to manage the position | You get a "your positions" section in the 3pm message |
 
 **Order:** W1 + W2 first (cheap, and they make everything else measurable), then W3 (the biggest lever),
 then W4–W6 (each measured with W2 on the wider universe), then W7 and W8.
@@ -103,11 +103,36 @@ then W4–W6 (each measured with W2 on the wider universe), then W7 and W8.
 ## 5. Decisions needed from you
 
 1. **Expand to all liquid DSE equities** (with the quality filter) for daily screening? It adds ~25 min once, then a few minutes weekly.
-2. **Holdings tracker:** would you mark your buys in the dashboard, or by Telegram message (e.g. `/bought PTL 53.7`)?
+2. ~~**Holdings tracker:** would you mark your buys in the dashboard, or by Telegram message (e.g. `/bought PTL 53.7`)?~~ Telegram (2026-10-08).
 3. **Re-entry style:** alert on a second breakout automatically, or only for stocks you're watching?
 4. Any **other winners** you remember, to add to the case-study set (the more examples, the better the tuning)?
 
 ## 6. Results
+
+### W8: holdings tracker, 2026-10-08 (built)
+You mark trades in Telegram; `bot` answers within seconds (`scripts/register_bot_task.ps1` starts it at logon),
+and the 3pm job reads any messages still waiting before it builds the summary.
+
+- **Ledger** (`trades` table): one row per `/bought`, `/sold` or `/stop`, in the order entered; `/undo` removes the
+  latest. Positions come from the ledger: average cost over the buys, a part sell keeps the average, and a sell
+  without a share count closes the position. Shares are optional (without them only % P/L is shown).
+- **Adjustment**: dividends and bonus shares with an ex-date after a buy lower the average cost the same way the
+  screen adjusts history (`price_factor`), and bonus shares raise the share count, so P/L stays correct across
+  record dates.
+- **Typos**: an unknown code suggests close matches (GPP → GP); a price outside that day's range, or more than
+  15% from the last close, is kept but flagged with "Typo? /undo".
+- **Daily section** ("Your positions", right after the market line; positions needing a look first): close, P/L
+  % and taka, distance from the high since the buy, where the stop (yours, or 8% below cost by default) and
+  MA20 are, and warnings: closed below the stop, touched it intraday, within 3% of it, below MA20 (first close
+  below is called out), heavy selling (≥ 2% drop on ≥ 2× the 20-day volume). Notes: record date in the next 15
+  days, today's signals on the stock, news from the last 3 days.
+- **Re-entry**: for 60 days after a sell, a 🔁 line when a strategy signals the stock again or a second-breakout
+  setup forms in it. This answers decision 3 for stocks you've held; other stocks still go through the shortlist.
+- Held stocks get news and company-page refreshes even when they fail the quality filter.
+- Thresholds: `holdings:` in `config/settings.yaml`. Not yet: a dashboard page, and checking on the trailing-stop
+  exits as a backtest exit style (stop8_ma20 is what the defaults mirror).
+
+Done when it has been used for real positions for two weeks and the warnings were useful, not noise.
 
 ### W2: backtest metrics, exit styles and recall, 2026-10-02
 `backtest` (CLI and dashboard) now reports mean, avg win / avg loss, **profit factor**, rule-based **exit styles**

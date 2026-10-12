@@ -148,7 +148,9 @@ def build_daily_report(
     news: dict[str, list[str]],
     cfg: ReportConfig,
     quotes: dict[str, dict] | None = None,
+    positions: str | None = None,
 ) -> str:
+    """`positions`: the "your positions" section (holdings.render), shown right after the market line."""
     quotes = quotes or {}
     indices = index_text(market)
     blocks = [
@@ -157,6 +159,8 @@ def build_daily_report(
         + f"Turnover {turnover_text(market)}\n▲ {market['advances']}  ▼ {market['declines']}  "
         f"● {market['unchanged']}"
     ]
+    if positions:
+        blocks.append(positions)
     for profile, res in results:
         passed = res.universe_size - len(res.excluded)
         head = (f"<b>▸ {_e(profile.name.upper())}</b> <i>{_e(profile.description)}</i>\n"
@@ -177,4 +181,4 @@ def build_notice(title: str, body: str) -> str:
 
 def to_plain(text_html: str) -> str:
     """For printing a preview in the terminal."""
-    return html.unescape(re.sub(r"</?(b|i)>", "", text_html))
+    return html.unescape(re.sub(r"</?(b|i|code)>", "", text_html))

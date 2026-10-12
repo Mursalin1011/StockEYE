@@ -49,6 +49,20 @@ telegram:
   enabled: true
   # bot_token and chat_id live in config/secrets.yaml (git-ignored), see secrets.example.yaml
 
+holdings:
+  # Your positions: mark them in Telegram (/bought PTL 53.7 500, /sold PTL 60, /stop PTL 48, /holdings, /undo).
+  # Run `python -m dse_screener bot` (or scripts/register_bot_task.ps1) so the bot answers right away;
+  # the 3pm job also picks up messages, but Telegram only keeps unread messages for 24 hours.
+  default_stop_pct: 8          # stop below your average cost when you didn't give one (backtest: stop8_ma20)
+  near_stop_pct: 3             # warn when the close is within 3% of the stop
+  trail_ma: 20                 # warn when the close falls below MA20
+  heavy_drop_pct: 2            # a 2%+ down day ...
+  heavy_volume_x: 2            # ... on 2x the 20-day average volume = heavy selling
+  record_date_days: 15         # mention record dates in the next 15 days
+  news_days: 3                 # news from the last 3 days under each position
+  reentry_days: 60             # after a sell, alert when a strategy signals that stock again
+  max_price_gap_pct: 15        # a price this far from the last close gets a "typo?" note
+
 adjustments:
   # DSE resets the reference price on the record date: (P - cash) / (1 + bonus).
   # true = adjust history for cash dividends too (like DSE); false = bonus/rights only.

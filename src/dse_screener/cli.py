@@ -12,8 +12,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from . import (backtest, casestudy, daily, engine, features, fundamentals, ingest, market, quality, report, rules,
-               simulate)
+from . import (backtest, bot, casestudy, daily, engine, features, fundamentals, holdings, ingest, market, quality,
+               report, rules, simulate)
 from .config import (CONFIG_DIR, Profile, TradePlan, list_plans, list_profiles, load_profile, load_settings,
                      read_plan_data, save_secret, set_plan_value)
 from .universes import universe_codes
@@ -182,6 +182,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("api", help="start the API for the web dashboard (127.0.0.1 only)")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--reload", action="store_true", help="restart on code changes (development)")
+
+    p = sub.add_parser("bot", help="answer your Telegram commands (/bought, /sold, /stop, /holdings, /undo)")
+    p.add_argument("--once", action="store_true", help="handle pending messages and exit")
+
+    p = sub.add_parser("holdings", help="your positions, or a tracker command, e.g. holdings bought PTL 53.7 500")
+    p.add_argument("words", nargs="*", help="same as in Telegram without the slash: bought, sold, stop, undo, help")
 
     sub.add_parser("telegram-setup", help="find your chat id after you've messaged the bot, and save it")
     sub.add_parser("telegram-test", help="send a test message")
@@ -378,8 +384,12 @@ def cmd_daily(args, settings, db) -> int:
     except TelegramError as exc:
         log.error("%s", exc)
         return 3
+    inbox = None
+    if not args.dry_run:
+        tg = TelegramNotifier(settings.telegram.bot_token, settings.telegram.chat_id)
+        inbox = lambda: None if bot.bot_running(db) else bot.poll_once(db, settings, tg)  # noqa: E731
     try:
-        outcome = daily.run_daily(settings, db, deliver, day=args.date, wait=args.date is None)
+        outcome = daily.run_daily(settings, db, deliver, day=args.date, wait=args.date is None, inbox=inbox)
     except Exception as exc:
         log.exception("Daily run failed")
         if not args.dry_run:
@@ -401,8 +411,37 @@ def cmd_report(args, settings, db) -> int:
     text = report.build_daily_report(
         day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
         settings.report, report.pick_quotes(db, pick_codes, day),
+        holdings.render(holdings.review(db, settings, day, results)),
     )
     _deliverer(settings, dry_run=not args.send)(text)
+    return 0
+
+
+def cmd_bot(args, settings, db) -> int:
+    try:
+        tg = TelegramNotifier(settings.telegram.bot_token, settings.telegram.chat_id)
+    except TelegramError as exc:
+        log.error("%s", exc)
+        return 3
+    if args.once:
+        print(f"Handled {bot.poll_once(db, settings, tg)} message(s).")
+        return 0
+    _log_to_file(settings, "bot")
+    try:
+        bot.run(db, settings, tg)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def cmd_holdings(args, settings, db) -> int:
+    text = " ".join(args.words) or "holdings"
+    try:
+        reply = holdings.apply(db, settings, holdings.parse(text, settings.today()), source="cli")
+    except holdings.CommandError as exc:
+        print(exc)
+        return 2
+    print(report.to_plain(reply))
     return 0
 
 
@@ -962,6 +1001,8 @@ COMMANDS = {
     "moves": cmd_moves,
     "simulate": cmd_simulate,
     "research": cmd_research,
+    "bot": cmd_bot,
+    "holdings": cmd_holdings,
     "telegram-setup": cmd_telegram_setup,
     "telegram-test": cmd_telegram_test,
     "status": cmd_status,

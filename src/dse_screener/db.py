@@ -219,6 +219,26 @@ CREATE TABLE IF NOT EXISTS moves_scans (    -- the "Big moves" page (moves.py), 
     PRIMARY KEY (as_of, config)
 );
 
+-- Your own buys and sells (holdings tracker, docs/05 W8). Positions are derived from this ledger,
+-- so every change is one row and /undo removes the latest one.
+CREATE TABLE IF NOT EXISTS trades (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT NOT NULL,
+    action      TEXT NOT NULL,          -- buy | sell | stop
+    date        TEXT NOT NULL,          -- trade date (YYYY-MM-DD) as you entered it
+    price       REAL NOT NULL,          -- as paid / received, or the stop level (unadjusted)
+    qty         REAL,                   -- shares; NULL = not given (sell: the whole position)
+    note        TEXT,
+    source      TEXT NOT NULL,          -- telegram | cli
+    source_ref  TEXT UNIQUE,            -- Telegram update id, so a message is never applied twice
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_state (     -- small key/value settings the app keeps for itself
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ingest_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_at      TEXT NOT NULL,
@@ -460,6 +480,38 @@ class Database:
         for col in ("reasons", "metrics"):
             df[col] = df[col].map(json.loads)
         return df
+
+    # --- holdings ledger ----------------------------------------------------
+
+    def add_trade(self, code: str, action: str, day: date, price: float, qty: float | None = None,
+                  note: str | None = None, source: str = "cli", source_ref: str | None = None) -> int | None:
+        """Returns the new id, or None if this source_ref was already recorded."""
+        with self.conn:
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO trades (code, action, date, price, qty, note, source, source_ref, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (code, action, day.isoformat(), price, qty, note, source, source_ref, _now()),
+            )
+        return cur.lastrowid if cur.rowcount else None
+
+    def load_trades(self) -> pd.DataFrame:
+        """Every ledger row in the order entered."""
+        df = self._query("SELECT * FROM trades ORDER BY id")
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+
+    def delete_trade(self, trade_id: int) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+
+    def get_state(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        with self.conn:
+            self.conn.execute("INSERT INTO app_state (key, value) VALUES (?, ?) "
+                              "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
 
     # --- ingest log ---------------------------------------------------------
 

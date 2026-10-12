@@ -61,10 +61,10 @@ def _official(day=THURSDAY):
             "unchanged": 0, "issues_traded": 400}
 
 
-def _run(env, clock, archive, day=THURSDAY, wait=True, official=lambda d: False):
+def _run(env, clock, archive, day=THURSDAY, wait=True, official=lambda d: False, inbox=None):
     settings, db, sent = env
     return run_daily(settings, db, sent.append, day=day, wait=wait, clock=clock, sleep=clock.sleep,
-                     archive=archive, refresh=lambda codes, d: None, official=official)
+                     archive=archive, refresh=lambda codes, d: None, official=official, inbox=inbox)
 
 
 def _at(t: time, d=THURSDAY):
@@ -112,6 +112,21 @@ def test_waits_for_official_totals_then_falls_back(env):
     out = _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), official=lambda d: calls.append(d) or False)
     assert out.status == "sent" and calls == [THURSDAY] * 3
     assert "excl. block trades" in to_plain(env[2][0])
+
+
+def test_positions_section_after_reading_commands(env):
+    _, db, _ = env
+    # the inbox runs before the summary is built, so a buy sent at 14:50 is in it
+    inbox = lambda: db.add_trade("X1", "buy", THURSDAY, 10.0, 100)  # noqa: E731
+    _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), inbox=inbox)
+    text = to_plain(env[2][0])
+    assert "YOUR POSITIONS\n1 open" in text and "X1 · 100 sh @ 10.00" in text and "+5.0%" in text
+    assert text.index("YOUR POSITIONS") < text.index("SWING")
+
+
+def test_no_positions_section_without_trades(env):
+    _run(env, FakeClock(_at(time(14, 50))), FakeArchive(), inbox=lambda: 1 / 0)    # a failing inbox is only logged
+    assert env[2] and "YOUR POSITIONS" not in env[2][0]
 
 
 def test_gives_up_and_notifies_on_holiday(env):

@@ -99,6 +99,20 @@ class ResearchConfig(BaseModel):
     send_telegram: bool = True           # `research review` sends the summary to Telegram
 
 
+class HoldingsConfig(BaseModel):
+    """Your positions (marked with /bought and /sold in Telegram): what the daily check warns about."""
+
+    default_stop_pct: float = 8.0        # stop this % below your average cost when you didn't set one
+    near_stop_pct: float = 3.0           # warn when the close is within this % above the stop
+    trail_ma: int = 20                   # warn when the close falls below this moving average
+    heavy_drop_pct: float = 2.0          # a down day of at least this % ...
+    heavy_volume_x: float = 2.0          # ... on this many times the 20-day average volume = heavy selling
+    record_date_days: int = 15           # mention a record date this many calendar days ahead
+    news_days: int = 3                   # news lines from the last N calendar days
+    reentry_days: int = 60               # after you sell, alert on new signals in that stock for this long
+    max_price_gap_pct: float = 15.0      # /bought or /sold this far from the last close: ask to check for a typo
+
+
 class AnthropicConfig(BaseModel):
     api_key: str = ""    # from config/secrets.yaml or ANTHROPIC_API_KEY; empty = SDK default credentials
 
@@ -114,6 +128,7 @@ class Settings(BaseModel):
     report: ReportConfig = ReportConfig()
     telegram: TelegramConfig = TelegramConfig()
     research: ResearchConfig = ResearchConfig()
+    holdings: HoldingsConfig = HoldingsConfig()
     anthropic: AnthropicConfig = AnthropicConfig()
 
     @property

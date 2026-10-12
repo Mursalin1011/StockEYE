@@ -10,7 +10,7 @@ from typing import Callable
 
 import pandas as pd
 
-from . import engine, fundamentals, ingest, market, moves, quality, report, rules
+from . import engine, fundamentals, holdings, ingest, market, moves, quality, report, rules
 from .config import Settings, list_profiles, load_profile
 from .universes import universe_codes
 from .db import Database
@@ -40,8 +40,10 @@ def run_daily(
     archive: PriceSource | None = None,
     refresh: Callable[[list[str], date], None] | None = None,
     official: Callable[[date], bool] | None = None,
+    inbox: Callable[[], object] | None = None,
 ) -> DailyOutcome:
     """`wait=False` is for re-running a past day: no waiting, no retries.
+    `inbox` reads your Telegram commands (/bought, /sold) first, so the positions section is current.
     clock/sleep/archive/refresh/official are injectable for tests."""
     cfg = settings.daily
     clock = clock or (lambda: datetime.now(settings.tz))
@@ -89,11 +91,25 @@ def run_daily(
     pick_codes = sorted({c for _, r in results for c in r.picks["code"]})
     text = report.build_daily_report(
         day, results, report.market_summary(db, day), report.recent_news(db, pick_codes, day, settings.report),
-        settings.report, report.pick_quotes(db, pick_codes, day),
+        settings.report, report.pick_quotes(db, pick_codes, day), _positions(settings, db, day, results, inbox),
     )
     deliver(text)
     _rebuild_moves(settings, db)
     return DailyOutcome("sent", day, text, {p.name: r.picks["code"].tolist() for p, r in results})
+
+
+def _positions(settings: Settings, db: Database, day: date, results, inbox) -> str | None:
+    """The "your positions" section. Never blocks the summary: failures are only logged."""
+    if inbox:
+        try:
+            inbox()
+        except Exception:  # noqa: BLE001
+            log.exception("Reading Telegram commands failed (summary continues)")
+    try:
+        return holdings.render(holdings.review(db, settings, day, results))
+    except Exception:  # noqa: BLE001
+        log.exception("Holdings check failed (summary continues without it)")
+        return "<b>▸ 💼 YOUR POSITIONS</b>\n⚠️ The check failed today, see the log."
 
 
 def _refresh(settings: Settings, db: Database, client: PoliteClient, codes: list[str], day: date) -> None:
@@ -106,7 +122,8 @@ def _refresh(settings: Settings, db: Database, client: PoliteClient, codes: list
     company_src = DseCompanySource(client, settings.sources.dse_company.base_url)
     news_src = DseNewsSource(client, settings.sources.dse_news.base_url)
     fundamentals.discover_instruments(db, company_src, news_src)
-    codes = sorted(set(codes) | set(_all_universe_codes(settings, db)))
+    held = holdings.tracked_codes(db, settings, day)      # your positions, even if they fail the quality filter
+    codes = sorted(set(codes) | set(_all_universe_codes(settings, db)) | set(held))
 
     companies = db.load_companies(codes)
     fetched = pd.to_datetime(companies.set_index("code")["fetched_at"], utc=True).dt.date
@@ -117,7 +134,7 @@ def _refresh(settings: Settings, db: Database, client: PoliteClient, codes: list
         log.info("Refreshing company pages for %d stocks (stalest first)", len(stale))
         fundamentals.refresh_fundamentals(db, company_src, news_src, stale, company_pages=True, news=False)
 
-    news_codes = _screenable(settings, db, codes)
+    news_codes = sorted(set(_screenable(settings, db, codes)) | set(held))
     if cfg.refresh_news and news_codes:
         log.info("Refreshing news for %d quality-passing stocks", len(news_codes))
         fundamentals.refresh_fundamentals(db, company_src, news_src, news_codes, company_pages=False, news=True)

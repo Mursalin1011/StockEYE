@@ -202,6 +202,34 @@ public distribution": they stay in `data/` (git-ignored) and are only sent to th
    ```
    Logs: `data/logs/daily-YYYY-MM-DD.log`. Remove with `Unregister-ScheduledTask -TaskName "DSE Screener"`.
 
+## Your positions (holdings tracker)
+
+Tell the bot what you bought and sold; the 3pm summary then opens with **Your positions**:
+
+| Send | Means |
+|---|---|
+| `/bought PTL 53.7 500` | bought 500 PTL at 53.7 today (shares optional; add a date `5/10` or `2026-10-05`, and `stop 48`) |
+| `/sold PTL 60` | sold the whole position (`/sold PTL 60 200` for part) |
+| `/stop PTL 48` | set your stop (`off` = the default, 8% below your average cost) |
+| `/holdings` | your positions as of the latest close |
+| `/undo` | remove your last entry |
+
+Each position shows the close, P/L (% and taka), where your stop and MA20 are, and warnings:
+closed below the stop (or touched it intraday), close to the stop, below MA20, heavy selling (a 2%+
+drop on 2× volume), an upcoming record date, today's signals and recent news. After you sell, a 🔁
+line appears when a strategy signals that stock again within 60 days. Dividends and bonus shares
+after a buy adjust the average cost. All thresholds: `holdings:` in `config/settings.yaml`.
+
+For instant replies, keep the bot running (starts at logon, restarts itself if it stops):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_bot_task.ps1
+```
+
+Without it the 3pm job still reads your messages first, but Telegram keeps unread messages only
+24 hours (a Thursday-evening `/bought` would be gone by Sunday). Only messages from your own chat
+(`chat_id`) are acted on. The same commands work locally: `python -m dse_screener holdings bought PTL 53.7 500`.
+
 ## Commands
 
 ```powershell
@@ -222,6 +250,8 @@ $py = ".\.venv\Scripts\python.exe"
 & $py -m dse_screener moves           # big moves in every stock and which strategies caught them
 & $py -m dse_screener simulate PTL --plan breakout-swing   # your own entry/exit rules on any stock
 & $py -m dse_screener research add <link> ; research review   # AI review of research PDFs
+& $py -m dse_screener holdings        # your positions (or: holdings bought PTL 53.7 500, holdings undo)
+& $py -m dse_screener bot             # answer Telegram commands (/bought, /sold, ...); --once to drain and exit
 & $py -m dse_screener api             # API for the dashboard
 & $py -m pytest                       # tests
 ```
@@ -244,9 +274,10 @@ src/dse_screener/
   simulate.py              # trade lab: your own entry/exit/hold rules on any stock, trades + equity
   research/                # AI review: documents, StockEYE context, Claude review, prediction ledger
   daily.py, report.py, notify/   # the 3pm job and Telegram
+  holdings.py, bot.py      # your positions: ledger, daily check, Telegram commands
   api/app.py               # FastAPI for the dashboard
 web/                       # Next.js 16 dashboard (App Router, Tailwind, TradingView Lightweight Charts)
-scripts/                   # dev.ps1, run_daily.ps1, register_task.ps1
+scripts/                   # dev.ps1, run_daily.ps1, register_task.ps1, run_bot.ps1, register_bot_task.ps1
 data/                      # created on first run: dse.sqlite + raw pages + logs (git-ignored)
 ```
 
